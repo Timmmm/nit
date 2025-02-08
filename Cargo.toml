@@ -1,0 +1,52 @@
+[package]
+name = "nit"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+
+# This gets it down to around 10MB instead of 18MB.
+[profile.release-small]
+inherits = "release"
+opt-level = "z"
+strip = true
+lto = true
+codegen-units = 1
+
+[dependencies]
+anyhow = { version = "1.0.95", features = ["backtrace"] }
+blake3 = "1.8.1"
+clap = { version = "4.5.28", features = ["derive"] }
+derive_more = { version = "1.0.0", features = ["display"] }
+dirs = "6.0.0"
+env_logger = "0.11.6"
+futures = "0.3.31"
+glob = "0.3.2"
+indicatif = { version = "0.17.11", features = ["tokio"] }
+itertools = "0.14.0"
+log = "0.4.25"
+memchr = "2.7.4"
+owo-colors = { version = "4.2.0", features = ["supports-color"] }
+regex = "1.11.1"
+reqwest = { version = "0.12.12", features = ["stream"] }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.140"
+serde_json5 = "0.2.1"
+tokio = { version = "1.43.0", features = ["rt", "macros", "fs"] }
+tokio-util = { version = "0.7.13", features = ["io",] }
+walkdir = "2.5.0"
+wasm-gen = "0.1.4"
+wasmtime = { version = "29.0.1", features = ["reexport-wasmparser"] }
+wasmtime-wasi = "29.0.1"
+
+[workspace]
+resolver = "2"
+members = [
+    "lints/lint_case_conflict",
+    "lints/lint_deny",
+    "lints/lint_executable_shebang",
+    "lints/lint_json_format",
+    "lints/lint_merge_conflicts",
+    "lints/lint_regex",
+    "lints/lint_tabs",
+    "lints/lint_whitespace",
+]

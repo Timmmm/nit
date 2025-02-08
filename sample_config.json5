@@ -1,0 +1,16 @@
+{
+    linters: [
+        {
+            name: "Ruff (Python format/lint)",
+            location: {
+                remote: {
+                    url: "https://github.com/Timmmm/ruff/releases/download/0.0.1/ruff.wasm",
+                    hash: "becf10f9e95dbb08d66b01a662c6041abb53aac64f3af669e81b6abd24b7b015",
+                },
+            },
+        },
+    ],
+    include: {
+        bool: true,
+    },
+}
