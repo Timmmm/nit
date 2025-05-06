@@ -11,8 +11,7 @@ use wasmtime::{
     Engine, Store,
 };
 use wasmtime_wasi::{
-    bindings::Command, pipe::MemoryOutputPipe, DirPerms, FilePerms, ResourceTable, WasiCtx,
-    WasiCtxBuilder, WasiView,
+    bindings::Command, pipe::MemoryOutputPipe, DirPerms, FilePerms, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView
 };
 
 use crate::{
@@ -60,6 +59,9 @@ impl WasiView for ComponentRunStates {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi_ctx
     }
+}
+
+impl IoView for ComponentRunStates {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.resource_table
     }

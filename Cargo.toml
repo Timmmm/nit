@@ -16,7 +16,7 @@ codegen-units = 1
 anyhow = { version = "1.0.95", features = ["backtrace"] }
 blake3 = "1.8.1"
 clap = { version = "4.5.28", features = ["derive"] }
-derive_more = { version = "1.0.0", features = ["display"] }
+derive_more = { version = "2.0.1", features = ["display"] }
 dirs = "6.0.0"
 env_logger = "0.11.6"
 futures = "0.3.31"
@@ -35,8 +35,8 @@ tokio = { version = "1.43.0", features = ["rt", "macros", "fs"] }
 tokio-util = { version = "0.7.13", features = ["io",] }
 walkdir = "2.5.0"
 wasm-gen = "0.1.4"
-wasmtime = { version = "29.0.1", features = ["reexport-wasmparser"] }
-wasmtime-wasi = "29.0.1"
+wasmtime = { version = "32.0.0", features = ["reexport-wasmparser"] }
+wasmtime-wasi = "32.0.0"
 
 [workspace]
 resolver = "2"
