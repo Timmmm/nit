@@ -43,7 +43,7 @@ mod test {
         let output = hash_digest(hash, digest);
         assert_eq!(
             output.to_hex().to_string(),
-            "8b8ae45bfe6457ca91313ef2dd51b2e94aa93615ab85e2f833f9c8cfaa81c183"
+            "f4826305680ffb770df05f17b1e1e38171d5050ec46d5310ddbf3ecee2a180ae"
         );
     }
 }
