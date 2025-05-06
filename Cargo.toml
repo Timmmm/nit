@@ -3,6 +3,10 @@ name = "nit"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
+description = "A more secure and reliable alternative to pre-commit."
+homepage = "https://github.com/Timmmm/nit/"
+repository = "https://github.com/Timmmm/nit/"
+documentation = "https://github.com/Timmmm/nit/"
 
 # This gets it down to around 10MB instead of 18MB.
 [profile.release-small]
