@@ -30,6 +30,7 @@ itertools = "0.14.0"
 log = "0.4.25"
 memchr = "2.7.4"
 owo-colors = { version = "4.2.0", features = ["supports-color"] }
+openssl = { version = "0.10.70", features = ["vendored"] }
 regex = "1.11.1"
 reqwest = { version = "0.12.12", features = ["stream"] }
 serde = { version = "1.0.217", features = ["derive"] }

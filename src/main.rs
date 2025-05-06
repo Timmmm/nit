@@ -234,7 +234,7 @@ async fn subcommand_install(cli: &Cli, args: &InstallArgs) -> Result<()> {
     };
 
     fs::write(
-        hook_path,
+        &hook_path,
         format!(
             "#!/bin/bash\n\nset -e\n\n{exe_path} {config_arg} {} \"$@\"\n",
             hook_type.as_str()
@@ -255,6 +255,8 @@ async fn subcommand_install(cli: &Cli, args: &InstallArgs) -> Result<()> {
 async fn set_executable(path: &Path) -> Result<()> {
     let metadata = fs::metadata(path).await?;
     let mut permissions = metadata.permissions();
+
+    use std::os::unix::fs::PermissionsExt;
 
     permissions.set_mode(permissions.mode() | 0o111);
 
