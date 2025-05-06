@@ -30,7 +30,6 @@ itertools = "0.14.0"
 log = "0.4.25"
 memchr = "2.7.4"
 owo-colors = { version = "4.2.0", features = ["supports-color"] }
-openssl = { version = "0.10.70", features = ["vendored"] }
 regex = "1.11.1"
 reqwest = { version = "0.12.12", features = ["stream"] }
 serde = { version = "1.0.217", features = ["derive"] }
@@ -42,6 +41,10 @@ walkdir = "2.5.0"
 wasm-gen = "0.1.4"
 wasmtime = { version = "32.0.0", features = ["reexport-wasmparser"] }
 wasmtime-wasi = "32.0.0"
+
+# OpenSSL is only used on Unix. We don't want to add it as a dependency on Windows.
+[target.'cfg(unix)'.dependencies]
+openssl = { version = "0.10.70", features = ["vendored"] }
 
 [workspace]
 resolver = "2"
