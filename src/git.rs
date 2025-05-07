@@ -31,7 +31,9 @@ pub fn git_hooks_dir() -> Result<PathBuf> {
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 pub enum FileType {
     Symlink,
+    /// Marked as executable in Git. This is possible on Windows too.
     ExecutableFile,
+    /// Not marked as executable in Git.
     File,
 }
 
@@ -75,7 +77,7 @@ pub fn git_tree_files(top_level: &Path, treeish: &str) -> Result<Vec<FileInfo>> 
         .map(|(mode, _hash, _size, path)| {
             // mode:   octal permission bits, e.g. 100644.
             // _hash:  object hash
-            // size:   size in bytes
+            // _size:  size in bytes
             // path:   file path
 
             let path = Path::new(
