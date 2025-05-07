@@ -1,0 +1,20 @@
+{
+    "argv0": "lint_whitespace",
+    "max_filenames": 1000,
+    "require_serial": false,
+    "args": [],
+    "default_match": {
+        "or": [
+            {
+                "glob": ".json"
+            },
+            {
+                "glob": ".md"
+            },
+            {
+                "glob": "*.rs"
+            }
+        ]
+    },
+    "repo": "https://github.com/timmmm/nit/"
+}

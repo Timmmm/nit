@@ -1,0 +1,23 @@
+{
+    "argv0": "lint_regex",
+    "max_filenames": 1000,
+    "require_serial": false,
+    "args": [
+        {
+            "name": "extra_args",
+            "args": []
+        },
+        {
+            "name": "separator",
+            "args": ["--"]
+        }
+    ],
+    "default_match": {
+        "or": [
+            {
+                "glob": ".todo"
+            }
+        ]
+    },
+    "repo": "https://github.com/timmmm/nit/"
+}

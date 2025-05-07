@@ -1,0 +1,10 @@
+{
+    "argv0": "lint_deny",
+    "max_filenames": 1000,
+    "require_serial": false,
+    "args": [],
+    "default_match": {
+        "bool": false
+    },
+    "repo": "https://github.com/timmmm/nit/"
+}
