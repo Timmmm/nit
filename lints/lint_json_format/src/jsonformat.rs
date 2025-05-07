@@ -23,7 +23,7 @@ pub enum Indentation<'a> {
 
 impl Default for Indentation<'_> {
     fn default() -> Self {
-        Self::TwoSpace
+        Self::FourSpace
     }
 }
 
