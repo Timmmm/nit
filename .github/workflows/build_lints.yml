@@ -35,6 +35,7 @@ jobs:
 
     - name: Build release WASI
       run: |
+        rustup target add wasm32-wasip2
         cargo build --release --target wasm32-wasip2 --package lint_case_conflict
         cargo build --release --target wasm32-wasip2 --package lint_deny
         cargo build --release --target wasm32-wasip2 --package lint_executable_shebang
