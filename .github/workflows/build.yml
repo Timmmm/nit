@@ -77,7 +77,7 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: release-${{ matrix.name }}
+        name: release-${{ matrix.os }}
         path: "target/${{ matrix.output_executable_upload_as }}"
         if-no-files-found: error
 
