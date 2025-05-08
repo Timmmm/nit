@@ -98,14 +98,14 @@ jobs:
 
     - name: Build and test
       run: |
-        cargo test --release --target wasm32-wasip2 --package lint_case_conflict
-        cargo test --release --target wasm32-wasip2 --package lint_deny
-        cargo test --release --target wasm32-wasip2 --package lint_executable_shebang
-        cargo test --release --target wasm32-wasip2 --package lint_json_format
-        cargo test --release --target wasm32-wasip2 --package lint_merge_conflicts
-        cargo test --release --target wasm32-wasip2 --package lint_regex
-        cargo test --release --target wasm32-wasip2 --package lint_tabs
-        cargo test --release --target wasm32-wasip2 --package lint_whitespace
+        cargo test --package lint_case_conflict
+        cargo test --package lint_deny
+        cargo test --package lint_executable_shebang
+        cargo test --package lint_json_format
+        cargo test --package lint_merge_conflicts
+        cargo test --package lint_regex
+        cargo test --package lint_tabs
+        cargo test --package lint_whitespace
 
     - name: Build release WASI
       run: |
