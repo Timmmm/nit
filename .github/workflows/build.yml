@@ -5,32 +5,83 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.0.0. Leave empty for no release."
+        required: false
+      notes:
+        description: "Release notes"
+        required: false
+      prerelease:
+        description: "Is this a pre-release (beta, RC, etc.)?"
+        required: false
+        type: boolean
+      draft:
+        description: "Is this a draft release (not public; you can publish it later)?"
+        required: false
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
+  # Main build job. Builds Nit binaries for every supported platform.
   build:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+        - os: ubuntu-latest
+          cargo_extra_flags: --target x86_64-unknown-linux-musl
+          output_executable: target/x86_64-unknown-linux-musl/release/nit
+          output_executable_upload_as: nit-linux
+        - os: macos-latest
+          output_executable: target/release/nit
+          output_executable_upload_as: nit-mac
+        - os: windows-latest
+          output_executable: target/release/nit.exe
+          output_executable_upload_as: nit-windows.exe
 
     steps:
-    - uses: actions/checkout@v4
+
+    - name: Install Musl target
+      if: ${{ matrix.os == 'ubuntu-latest' }}
+      run: >
+        sudo apt-get install musl-tools
+        rustup target add x86_64-unknown-linux-musl
 
     - name: Versions
       run: |
         git version
         cargo version
+        musl-gcc --version
+
+    - name: Install WASI target
+      run: rustup target add wasm32-wasip2
+
+    - uses: actions/checkout@v4
 
     - name: Build
-      run: cargo build
+      run: cargo build --verbose --release --locked ${{ matrix.cargo_extra_flags }}
 
-    - name: Run tests
-      run: cargo test
+    - name: Test
+      run: cargo test --verbose --release --locked ${{ matrix.cargo_extra_flags }}
 
+    - name: Rename Output
+      shell: pwsh
+      run: Move-Item -Path "${{ matrix.output_executable }}" -Destination "target/${{ matrix.output_executable_upload_as }}"
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-${{ matrix.name }}
+        path: "target/${{ matrix.output_executable_upload_as }}"
+        if-no-files-found: error
+
+  # Build first party linters as WASI binaries.
   build_lints:
     runs-on: ubuntu-latest
 
@@ -42,20 +93,22 @@ jobs:
         git version
         cargo version
 
+    - name: Install WASI target
+      run: rustup target add wasm32-wasip2
+
     - name: Build and test
       run: |
-        cargo test --package lint_case_conflict
-        cargo test --package lint_deny
-        cargo test --package lint_executable_shebang
-        cargo test --package lint_json_format
-        cargo test --package lint_merge_conflicts
-        cargo test --package lint_regex
-        cargo test --package lint_tabs
-        cargo test --package lint_whitespace
+        cargo test --release --target wasm32-wasip2 --package lint_case_conflict
+        cargo test --release --target wasm32-wasip2 --package lint_deny
+        cargo test --release --target wasm32-wasip2 --package lint_executable_shebang
+        cargo test --release --target wasm32-wasip2 --package lint_json_format
+        cargo test --release --target wasm32-wasip2 --package lint_merge_conflicts
+        cargo test --release --target wasm32-wasip2 --package lint_regex
+        cargo test --release --target wasm32-wasip2 --package lint_tabs
+        cargo test --release --target wasm32-wasip2 --package lint_whitespace
 
     - name: Build release WASI
       run: |
-        rustup target add wasm32-wasip2
         cargo build --release --target wasm32-wasip2 --package lint_case_conflict
         cargo build --release --target wasm32-wasip2 --package lint_deny
         cargo build --release --target wasm32-wasip2 --package lint_executable_shebang
@@ -75,3 +128,37 @@ jobs:
         cargo run -- set-metadata --metadata lints/lint_regex/metadata.json              target/wasm32-wasip2/release/lint_regex.wasm
         # cargo run -- set-metadata --metadata lints/lint_tabs/metadata.json               target/wasm32-wasip2/release/lint_tabs.wasm
         cargo run -- set-metadata --metadata lints/lint_whitespace/metadata.json         target/wasm32-wasip2/release/lint_whitespace.wasm
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-lints
+        path: |
+          target/wasm32-wasip2/release/lint_*.wasm
+        if-no-files-found: error
+
+  release:
+    # Only run this job fork workflow_dispatch, and only if a version is provided.
+    if: ${{ inputs && inputs.version != '' }}
+    needs: [build, build_lints]
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to create a release.
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/nit-linux
+            target/nit-mac
+            target/nit-windows.exe
+            target/wasm32-wasip2/release/lint_*.wasm
+          fail_on_unmatched_files: true
+          tag_name: ${{ inputs.version }}
+          body: ${{ inputs.notes }}
+          prerelease: ${{ inputs.prerelease }}
+          draft: ${{ inputs.draft }}
