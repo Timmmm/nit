@@ -29,6 +29,7 @@ pub fn git_hooks_dir() -> Result<PathBuf> {
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum FileType {
     Symlink,
     /// Text file marked as executable in Git. This is possible on Windows too.

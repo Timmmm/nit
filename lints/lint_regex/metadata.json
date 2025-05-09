@@ -13,11 +13,7 @@
         }
     ],
     "default_match": {
-        "or": [
-            {
-                "glob": ".todo"
-            }
-        ]
+        "type": "text_file"
     },
     "repo": "https://github.com/timmmm/nit/"
 }

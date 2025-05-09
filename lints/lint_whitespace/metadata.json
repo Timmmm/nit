@@ -4,17 +4,7 @@
     "require_serial": false,
     "args": [],
     "default_match": {
-        "or": [
-            {
-                "glob": ".json"
-            },
-            {
-                "glob": ".md"
-            },
-            {
-                "glob": "*.rs"
-            }
-        ]
+        "type": "text_file"
     },
     "repo": "https://github.com/timmmm/nit/"
 }
