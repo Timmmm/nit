@@ -152,12 +152,13 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          # The common prefixes of the artifacts get stripped.
+          # The common prefixes of the artifacts get stripped, and then they
+          # get extracted into directories with the same name as the artifact.
           files: |
-            nit-linux
-            nit-mac
-            nit-windows.exe
-            lint_*.wasm
+            release-windows-latest/nit-linux
+            release-macos-latest/nit-mac
+            release-ubuntu-latest/nit-windows.exe
+            release-lints/lint_*.wasm
           fail_on_unmatched_files: true
           tag_name: ${{ inputs.version }}
           body: ${{ inputs.notes }}
