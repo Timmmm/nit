@@ -4,7 +4,7 @@ use std::{
     process::Command,
 };
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use itertools::Itertools as _;
 use serde::Deserialize;
 
@@ -31,16 +31,27 @@ pub fn git_hooks_dir() -> Result<PathBuf> {
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 pub enum FileType {
     Symlink,
-    /// Marked as executable in Git. This is possible on Windows too.
-    ExecutableFile,
-    /// Not marked as executable in Git.
-    File,
+    /// Text file marked as executable in Git. This is possible on Windows too.
+    ExecutableText,
+    /// Binary file marked as executable in Git.
+    ExecutableBinary,
+    /// Text file not marked as executable in Git.
+    Text,
+    /// Binary file not marked as executable in Git.
+    Binary,
 }
 
 pub struct FileInfo {
     pub path: PathBuf,
     pub ty: FileType,
     pub shebang: Option<String>,
+}
+
+#[derive(Eq, PartialEq)]
+enum GitFileType {
+    Symlink,
+    Executable,
+    File,
 }
 
 /// Get info on all of the files in a tree (i.e. a commit). This doesn't work
@@ -70,46 +81,7 @@ pub fn git_tree_files(top_level: &Path, treeish: &str) -> Result<Vec<FileInfo>> 
         bail!("git ls-tree command failed");
     }
 
-    command
-        .stdout
-        .split(|&b| b == 0)
-        .tuples()
-        .map(|(mode, _hash, _size, path)| {
-            // mode:   octal permission bits, e.g. 100644.
-            // _hash:  object hash
-            // _size:  size in bytes
-            // path:   file path
-
-            let path = Path::new(
-                std::str::from_utf8(path).with_context(|| anyhow!("Failed to parse path"))?,
-            );
-            let ty = match mode {
-                b"120000" => FileType::Symlink,
-                b"100755" => FileType::ExecutableFile,
-                _ => FileType::File,
-            };
-
-            let shebang = (ty == FileType::ExecutableFile)
-                .then(|| {
-                    let contents = std::fs::File::open(&path)
-                        .with_context(|| anyhow!("Failed to read {:?}", path))
-                        .ok()?;
-                    let reader = std::io::BufReader::new(contents);
-                    reader.lines().next().and_then(|maybe_first_line| {
-                        maybe_first_line.ok().and_then(|first_line| {
-                            first_line.strip_prefix("#!").map(ToOwned::to_owned)
-                        })
-                    })
-                })
-                .flatten();
-
-            Ok(FileInfo {
-                path: path.to_owned(),
-                ty,
-                shebang: shebang,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()
+    process_file_info(&command.stdout)
 }
 
 /// Get info on all of the staged files.
@@ -132,47 +104,7 @@ pub fn git_staged_files(top_level: &Path) -> Result<Vec<FileInfo>> {
         bail!("git ls-files command failed");
     }
 
-    // TODO (1.0): DRY.
-    command
-        .stdout
-        .split(|&b| b == 0)
-        .tuples()
-        .map(|(mode, _hash, _size, path)| {
-            // mode:   octal permission bits, e.g. 100644.
-            // _hash:  object hash
-            // size:   size in bytes
-            // path:   file path
-
-            let path = Path::new(
-                std::str::from_utf8(path).with_context(|| anyhow!("Failed to parse path"))?,
-            );
-            let ty = match mode {
-                b"120000" => FileType::Symlink,
-                b"100755" => FileType::ExecutableFile,
-                _ => FileType::File,
-            };
-
-            let shebang = (ty == FileType::ExecutableFile)
-                .then(|| {
-                    let contents = std::fs::File::open(&path)
-                        .with_context(|| anyhow!("Failed to read {:?}", path))
-                        .ok()?;
-                    let reader = std::io::BufReader::new(contents);
-                    reader.lines().next().and_then(|maybe_first_line| {
-                        maybe_first_line.ok().and_then(|first_line| {
-                            first_line.strip_prefix("#!").map(ToOwned::to_owned)
-                        })
-                    })
-                })
-                .flatten();
-
-            Ok(FileInfo {
-                path: path.to_owned(),
-                ty,
-                shebang: shebang,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()
+    process_file_info(&command.stdout)
 }
 
 /// List of files changed in the working directory (not staged).
@@ -190,4 +122,94 @@ pub fn git_diff_unstaged(top_level: &Path) -> Result<Vec<u8>> {
         bail!("git diff command failed");
     }
     Ok(output.stdout)
+}
+
+fn process_file_info(ls_files_stdout: &[u8]) -> Result<Vec<FileInfo>> {
+    ls_files_stdout
+        .split(|&b| b == 0)
+        .tuples()
+        .map(|(mode, _hash, _size, path)| {
+            // mode:   octal permission bits, e.g. 100644.
+            // _hash:  object hash
+            // _size:  size in bytes
+            // path:   file path
+
+            let path = Path::new(
+                std::str::from_utf8(path).with_context(|| anyhow!("Failed to parse path"))?,
+            );
+            let git_ty = match mode {
+                b"120000" => GitFileType::Symlink,
+                b"100755" => GitFileType::Executable,
+                _ => GitFileType::File,
+            };
+
+            let (ty, shebang) = if git_ty == GitFileType::Symlink {
+                (FileType::Symlink, None)
+            } else {
+                // Read the first 8000 bytes and look for a null byte. This is how
+                // Git decides if it's binary.
+                let mut file = std::fs::File::open(&path)?;
+                let mut buf = [0; 8000];
+                let len = read_up_to(&mut file, &mut buf)?;
+                let contents = &buf[..len];
+
+                let is_binary = memchr::memchr(0, contents).is_some();
+
+                let shebang = (git_ty == GitFileType::Executable)
+                    .then(|| {
+                        let reader = std::io::BufReader::new(contents);
+                        reader.lines().next().and_then(|maybe_first_line| {
+                            maybe_first_line.ok().and_then(|first_line| {
+                                first_line.strip_prefix("#!").map(ToOwned::to_owned)
+                            })
+                        })
+                    })
+                    .flatten();
+
+                let ty = match git_ty {
+                    GitFileType::Executable => {
+                        if is_binary {
+                            FileType::ExecutableBinary
+                        } else {
+                            FileType::ExecutableText
+                        }
+                    }
+                    GitFileType::File => {
+                        if is_binary {
+                            FileType::Binary
+                        } else {
+                            FileType::Text
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                (ty, shebang)
+            };
+
+            Ok(FileInfo {
+                path: path.to_owned(),
+                ty,
+                shebang,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
+
+/// This is the same as read_exact, except if it reaches EOF it doesn't return
+/// an error, and it returns the number of bytes read.
+fn read_up_to(file: &mut impl std::io::Read, mut buf: &mut [u8]) -> Result<usize, std::io::Error> {
+    let buf_len = buf.len();
+
+    while !buf.is_empty() {
+        match file.read(buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let tmp = buf;
+                buf = &mut tmp[n..];
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(buf_len - buf.len())
 }
