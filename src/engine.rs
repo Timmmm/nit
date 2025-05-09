@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 use futures::{StreamExt as _, stream};
-use log::info;
+use log::{debug, info};
 use std::{
     collections::BTreeSet,
     env,
@@ -177,6 +177,8 @@ async fn run_linter_command(
     engine: &Engine,
     component: &Component,
 ) -> Result<bool> {
+    debug!("Running linter with args: {:?}", args);
+
     let mut linker = Linker::new(&engine);
 
     wasmtime_wasi::add_to_linker_async(&mut linker)?;

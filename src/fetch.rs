@@ -88,6 +88,9 @@ fn to_async_read(
 }
 
 pub async fn fetch_linters(linters: &[ConfigLinter], cache_dir: &Path) -> Result<()> {
+
+    info!("Fetching linters...");
+
     // 1. Collect all the URL/binary hash pairs.
     // 2. Deduplicate URLs. Throw an error if different binary hashes
     //    were given for the same URL.
@@ -192,7 +195,9 @@ pub async fn fetch_linters(linters: &[ConfigLinter], cache_dir: &Path) -> Result
         .await?;
 
     // Change the message on the overall progress indicator.
-    main_pb.finish_with_message("done");
+    main_pb.finish_and_clear();
+
+    info!("Linters fetched");
 
     Ok(())
 }
