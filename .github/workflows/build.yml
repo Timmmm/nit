@@ -149,6 +149,10 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
 
+      - name: List artifacts
+        run: |
+          ls -R
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
