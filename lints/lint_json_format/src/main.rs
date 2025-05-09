@@ -1,7 +1,7 @@
 mod jsonformat;
 
-use std::{fs, io, process::ExitCode};
 use clap::Parser;
+use std::{fs, io, process::ExitCode};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -29,11 +29,7 @@ fn main() -> io::Result<ExitCode> {
         let mut formatted_content = Vec::new();
         let writer = io::BufWriter::new(&mut formatted_content);
 
-        jsonformat::format_reader_writer(
-            content.as_slice(),
-            writer,
-            indentation,
-        )?;
+        jsonformat::format_reader_writer(content.as_slice(), writer, indentation)?;
 
         if formatted_content != content {
             fs::write(&file, formatted_content)?;

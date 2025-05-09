@@ -1,5 +1,5 @@
-use anyhow::{anyhow, bail, Context as _, Result};
-use futures::{stream, StreamExt as _};
+use anyhow::{Context as _, Result, anyhow, bail};
+use futures::{StreamExt as _, stream};
 use log::info;
 use std::{
     collections::BTreeSet,
@@ -7,18 +7,19 @@ use std::{
     path::{Path, PathBuf},
 };
 use wasmtime::{
-    component::{Component, Linker},
     Engine, Store,
+    component::{Component, Linker},
 };
 use wasmtime_wasi::{
-    bindings::Command, pipe::MemoryOutputPipe, DirPerms, FilePerms, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView
+    DirPerms, FilePerms, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
+    bindings::Command, pipe::MemoryOutputPipe,
 };
 
 use crate::{
     config::{ConfigLinter, LinterLocation},
     file_matching::matching_files,
     git::FileInfo,
-    metadata::{read_metadata, ArgBlock},
+    metadata::{ArgBlock, read_metadata},
     wasi_cache,
 };
 

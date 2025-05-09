@@ -5,11 +5,11 @@ use std::{
     collections::BTreeMap,
     io::Write,
     path::Path,
-    sync::{atomic::AtomicU64, Arc},
+    sync::{Arc, atomic::AtomicU64},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
-use futures::{stream, Stream, StreamExt as _, TryStreamExt as _};
+use anyhow::{Context, Result, anyhow, bail};
+use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
 use tokio::{
     fs::{self, File},
     io::{AsyncBufRead, AsyncReadExt as _},
@@ -71,7 +71,9 @@ pub async fn download(url: Url, save_to: &Path, progress_bar: ProgressBar) -> Re
 
     if let Some(content_length) = content_length {
         if downloaded_bytes != content_length {
-            bail!("Content length from server was {content_length} but we downloaded {downloaded_bytes} bytes");
+            bail!(
+                "Content length from server was {content_length} but we downloaded {downloaded_bytes} bytes"
+            );
         }
     }
 
@@ -174,7 +176,9 @@ pub async fn fetch_linters(linters: &[ConfigLinter], cache_dir: &Path) -> Result
 
                 let read_hash = file_binary_hash(&binary_path).await?;
                 if read_hash != *hash {
-                    bail!("Hash mismatch for {url} after download: expected {hash}, got {read_hash}");
+                    bail!(
+                        "Hash mismatch for {url} after download: expected {hash}, got {read_hash}"
+                    );
                 }
 
                 // Increment the overall progress indicator.

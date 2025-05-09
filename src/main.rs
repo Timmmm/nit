@@ -11,10 +11,10 @@ mod serde_regex;
 mod unique_filename;
 mod wasi_cache;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use bash_paths::path_to_bash_string;
 use clap::{Parser, Subcommand, ValueEnum};
-use config::{read_config, Config};
+use config::{Config, read_config};
 use engine::{get_cache_dir, run_single_linter};
 use env_logger::{Builder, Env};
 use fetch::fetch_linters;

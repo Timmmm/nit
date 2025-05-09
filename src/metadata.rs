@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use std::path::Path;
 use wasmtime::wasmparser::{Parser, Payload};
@@ -63,7 +63,8 @@ pub fn read_metadata(wasm_path: &Path) -> Result<NitMetadata> {
     for payload in parser.parse_all(&module) {
         match payload? {
             Payload::CustomSection(section) if section.name() == "nit_metadata" => {
-                return Ok(serde_json::from_slice::<NitMetadata>(section.data()).with_context(|| anyhow!("Reading metadata for {}", wasm_path.display()))?);
+                return Ok(serde_json::from_slice::<NitMetadata>(section.data())
+                    .with_context(|| anyhow!("Reading metadata for {}", wasm_path.display()))?);
             }
             _ => {}
         }

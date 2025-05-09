@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use tokio::fs;
-use wasmtime::{component::Component, Engine};
+use wasmtime::{Engine, component::Component};
 
 use crate::{hash_adapter, unique_filename::unique_filename};
 

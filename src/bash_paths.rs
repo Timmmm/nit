@@ -1,6 +1,6 @@
 use std::path::{Component, Path, Prefix};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 
 /// Convert a path to a string that can be used in Bash. This is necessary on
 /// Windows because Git runs hooks in Git Bash, which uses Mingw paths
