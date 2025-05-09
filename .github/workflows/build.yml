@@ -159,9 +159,9 @@ jobs:
           # The common prefixes of the artifacts get stripped, and then they
           # get extracted into directories with the same name as the artifact.
           files: |
-            release-windows-latest/nit-linux
+            release-ubuntu-latest/nit-linux
             release-macos-latest/nit-mac
-            release-ubuntu-latest/nit-windows.exe
+            release-windows-latest/nit-windows.exe
             release-lints/lint_*.wasm
           fail_on_unmatched_files: true
           tag_name: ${{ inputs.version }}
