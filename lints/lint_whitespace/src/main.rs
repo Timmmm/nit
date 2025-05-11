@@ -19,6 +19,7 @@ fn main() -> io::Result<ExitCode> {
 }
 
 /// Strip trailing whitespace. This also magically fixes \r\n endings.
+/// Returns true if the contents were modified.
 fn strip_trailing_whitespace(contents: &mut Vec<u8>) -> bool {
     let mut modified = false;
 
@@ -37,17 +38,18 @@ fn strip_trailing_whitespace(contents: &mut Vec<u8>) -> bool {
     modified
 }
 
-/// Ensure exactly two newlines at the end of the file. Trailing whitespace
+/// Ensure exactly one newline at the end of the file. Trailing whitespace
 /// after the newlines should already have been stripped.
+/// Returns true if the contents were modified.
 fn ensure_newline_at_end(contents: &mut Vec<u8>) -> bool {
-    let orig_len = contents.len();
-    let orig_ends_width = contents.ends_with(b"\n\n");
+    let original_len = contents.len();
 
-    contents.truncate(contents.trim_ascii_end().len());
-    contents.push(b'\n');
+    while contents.ends_with(b"\n") {
+        contents.pop();
+    }
     contents.push(b'\n');
 
-    contents.len() != orig_len || !orig_ends_width
+    contents.len() != original_len
 }
 
 /// Like `retain`, but in reverse. Based on `retain` before it was optimised
@@ -87,19 +89,19 @@ mod test {
 
     #[test]
     fn test_ensure_newline_at_end() {
-        let mut contents = b"\nhello there\n\nworld\n\n".to_vec();
+        let mut contents = b"\nhello there\n\nworld\n".to_vec();
         let modified = ensure_newline_at_end(&mut contents);
         assert_eq!(modified, false);
-        assert_eq!(contents, b"\nhello there\n\nworld\n\n");
+        assert_eq!(contents, b"\nhello there\n\nworld\n");
 
         let mut contents = b"\nhello there\n\nworld".to_vec();
         let modified = ensure_newline_at_end(&mut contents);
         assert_eq!(modified, true);
-        assert_eq!(contents, b"\nhello there\n\nworld\n\n");
+        assert_eq!(contents, b"\nhello there\n\nworld\n");
 
-        let mut contents = b"\nhello there\n\nworld\n".to_vec();
+        let mut contents = b"\nhello there\n\nworld\n\n".to_vec();
         let modified = ensure_newline_at_end(&mut contents);
         assert_eq!(modified, true);
-        assert_eq!(contents, b"\nhello there\n\nworld\n\n");
+        assert_eq!(contents, b"\nhello there\n\nworld\n");
     }
 }
