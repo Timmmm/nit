@@ -234,9 +234,28 @@ mod test {
 
         let status = Command::new("git")
             .arg("init")
+            .arg("--initial-branch=master")
             .current_dir(dir.path())
             .status()
             .expect("Failed to run git init");
+        assert!(status.success());
+
+        let status = Command::new("git")
+            .arg("config")
+            .arg("user.name")
+            .arg("Test User")
+            .current_dir(dir.path())
+            .status()
+            .expect("Failed to run git config user.name");
+        assert!(status.success());
+
+        let status = Command::new("git")
+            .arg("config")
+            .arg("user.email")
+            .arg("test@example.com")
+            .current_dir(dir.path())
+            .status()
+            .expect("Failed to run git config user.email");
         assert!(status.success());
 
         let status = Command::new("git")
