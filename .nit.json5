@@ -4,8 +4,8 @@
             name: "Trailing whitespace",
             location: {
                 remote: {
-                    url: "https://github.com/Timmmm/nit/releases/download/0.1.2/lint_whitespace.wasm",
-                    hash: "12c009463448f2766be1795da752e06d43b9c86a0a1de82e95d3b871a8e3fffe",
+                    url: "https://github.com/Timmmm/nit/releases/download/0.1.4/lint_whitespace.wasm",
+                    hash: "3c6e03861a70c4ae165890bb991527ada59749b00c31b89041fe18faa6d24853",
                 },
             },
         },
