@@ -232,30 +232,30 @@ mod test {
         let bin_path = dir.path().join("test.bin");
         std::fs::write(&bin_path, b"Hello \x00!").expect("Failed to write test binary file");
 
-        let output = Command::new("git")
+        let status = Command::new("git")
             .arg("init")
             .current_dir(dir.path())
-            .output()
+            .status()
             .expect("Failed to run git init");
-        assert!(output.status.success());
+        assert!(status.success());
 
-        let output = Command::new("git")
+        let status = Command::new("git")
             .arg("add")
             .arg(&text_path)
             .arg(&bin_path)
             .current_dir(dir.path())
-            .output()
+            .status()
             .expect("Failed to run git add");
-        assert!(output.status.success());
+        assert!(status.success());
 
-        let output = Command::new("git")
+        let status = Command::new("git")
             .arg("commit")
             .arg("-m")
             .arg("Test commit")
             .current_dir(dir.path())
-            .output()
+            .status()
             .expect("Failed to run git commit");
-        assert!(output.status.success());
+        assert!(status.success());
 
         let mut files = git_tree_files(dir.path(), "HEAD").expect("Failed to get git tree files");
         files.sort();
