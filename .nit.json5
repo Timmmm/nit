@@ -1,11 +1,11 @@
 {
     linters: [
         {
-            name: "Ruff (Python format/lint)",
+            name: "Trailing whitespace",
             location: {
                 remote: {
-                    url: "https://github.com/Timmmm/ruff/releases/download/0.0.1/ruff.wasm",
-                    hash: "becf10f9e95dbb08d66b01a662c6041abb53aac64f3af669e81b6abd24b7b015",
+                    url: "https://github.com/Timmmm/nit/releases/download/0.1.2/lint_whitespace.wasm",
+                    hash: "12c009463448f2766be1795da752e06d43b9c86a0a1de82e95d3b871a8e3fffe",
                 },
             },
         },
@@ -14,3 +14,4 @@
         bool: true,
     },
 }
+
