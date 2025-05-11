@@ -96,6 +96,9 @@ jobs:
     - name: Install WASI target
       run: rustup target add wasm32-wasip2
 
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+
     - name: Build and test
       run: |
         cargo test --package lint_case_conflict
