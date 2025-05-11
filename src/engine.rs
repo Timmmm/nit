@@ -11,8 +11,7 @@ use wasmtime::{
     component::{Component, Linker},
 };
 use wasmtime_wasi::{
-    DirPerms, FilePerms, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
-    bindings::Command, pipe::MemoryOutputPipe,
+    bindings::Command, pipe::MemoryOutputPipe, DirPerms, FilePerms, I32Exit, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView
 };
 
 use crate::{
@@ -216,10 +215,22 @@ async fn run_linter_command(
 
     info!("Starting call");
 
-    let program_result = command.wasi_cli_run().call_run(&mut store).await?;
+    let run_result = command.wasi_cli_run().call_run(&mut store).await;
+
+    // The return type here is very weird.
+    match run_result {
+        Ok(res) => res.map_err(|_| anyhow!("Unknown error running linter"))?,
+        Err(error) => {
+            if let Some(exit) = error.downcast_ref::<I32Exit>() {
+                info!("Call failed with exit code {:?}", exit.0);
+                return Ok(false);
+            }
+            return Err(error);
+        }
+    };
 
     info!("Call finished");
 
     // TODO (2.0): Use WASI to check if files were modified.
-    Ok(program_result.is_ok())
+    Ok(true)
 }
