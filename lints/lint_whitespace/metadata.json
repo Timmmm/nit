@@ -4,7 +4,7 @@
     "require_serial": false,
     "args": [],
     "default_match": {
-        "type": "text_file"
+        "type": "text"
     },
     "repo": "https://github.com/timmmm/nit/"
 }
