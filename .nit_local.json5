@@ -1,0 +1,13 @@
+{
+    linters: [
+        {
+            name: "Trailing whitespace",
+            location: {
+                local: "target/wasm32-wasip2/release/lint_whitespace.wasm",
+            },
+        },
+    ],
+    include: {
+        bool: true,
+    },
+}
