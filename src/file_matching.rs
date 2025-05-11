@@ -58,3 +58,24 @@ pub fn matching_files<'a>(files: &'a [FileInfo], expr: &MatchExpression) -> Vec<
 pub fn retain_matching_files<'a>(files: &mut Vec<FileInfo>, expr: &MatchExpression) {
     files.retain(|f| file_matches(f, expr))
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::git::FileType;
+
+    #[test]
+    fn test_matching_files() {
+        let files = vec![
+            FileInfo {
+                path: "foo.rs".into(),
+                ty: FileType::Text,
+                shebang: None,
+            }
+        ];
+
+        let expr = MatchExpression::Glob(glob::Pattern::new("*.rs").unwrap());
+        let matches = matching_files(&files, &expr);
+        assert_eq!(matches.len(), 1);
+    }
+}

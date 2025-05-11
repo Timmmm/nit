@@ -58,3 +58,6 @@ members = [
     "lints/lint_tabs",
     "lints/lint_whitespace",
 ]
+
+[dev-dependencies]
+tempfile = "3.19.1"

@@ -28,7 +28,7 @@ pub fn git_hooks_dir() -> Result<PathBuf> {
     Ok(PathBuf::from(path.trim()))
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
 #[serde(rename_all = "snake_case")]
 pub enum FileType {
     Symlink,
@@ -42,6 +42,7 @@ pub enum FileType {
     Binary,
 }
 
+#[derive(Eq, PartialEq, Ord, PartialOrd)]
 pub struct FileInfo {
     pub path: PathBuf,
     pub ty: FileType,
@@ -82,7 +83,7 @@ pub fn git_tree_files(top_level: &Path, treeish: &str) -> Result<Vec<FileInfo>> 
         bail!("git ls-tree command failed");
     }
 
-    process_file_info(&command.stdout)
+    process_file_info(top_level, &command.stdout)
 }
 
 /// Get info on all of the staged files.
@@ -105,7 +106,7 @@ pub fn git_staged_files(top_level: &Path) -> Result<Vec<FileInfo>> {
         bail!("git ls-files command failed");
     }
 
-    process_file_info(&command.stdout)
+    process_file_info(top_level, &command.stdout)
 }
 
 /// List of files changed in the working directory (not staged).
@@ -125,7 +126,7 @@ pub fn git_diff_unstaged(top_level: &Path) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-fn process_file_info(ls_files_stdout: &[u8]) -> Result<Vec<FileInfo>> {
+fn process_file_info(top_level: &Path, ls_files_stdout: &[u8]) -> Result<Vec<FileInfo>> {
     ls_files_stdout
         .split(|&b| b == 0)
         .tuples()
@@ -149,7 +150,8 @@ fn process_file_info(ls_files_stdout: &[u8]) -> Result<Vec<FileInfo>> {
             } else {
                 // Read the first 8000 bytes and look for a null byte. This is how
                 // Git decides if it's binary.
-                let mut file = std::fs::File::open(&path)?;
+                let full_path = top_level.join(path);
+                let mut file = std::fs::File::open(&full_path)?;
                 let mut buf = [0; 8000];
                 let len = read_up_to(&mut file, &mut buf)?;
                 let contents = &buf[..len];
@@ -213,4 +215,52 @@ fn read_up_to(file: &mut impl std::io::Read, mut buf: &mut [u8]) -> Result<usize
         }
     }
     Ok(buf_len - buf.len())
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_process_file_info() {
+        let dir = tempdir().expect("Failed to create temp dir");
+
+        let text_path = dir.path().join("test.txt");
+        std::fs::write(&text_path, "Hello, world!").expect("Failed to write test text file");
+        let bin_path = dir.path().join("test.bin");
+        std::fs::write(&bin_path, b"Hello \x00!").expect("Failed to write test binary file");
+
+        let output = Command::new("git")
+            .arg("init")
+            .current_dir(dir.path())
+            .output()
+            .expect("Failed to run git init");
+        assert!(output.status.success());
+
+        let output = Command::new("git")
+            .arg("add")
+            .arg(&text_path)
+            .arg(&bin_path)
+            .current_dir(dir.path())
+            .output()
+            .expect("Failed to run git add");
+        assert!(output.status.success());
+
+        let output = Command::new("git")
+            .arg("commit")
+            .arg("-m")
+            .arg("Test commit")
+            .current_dir(dir.path())
+            .output()
+            .expect("Failed to run git commit");
+        assert!(output.status.success());
+
+        let mut files = git_tree_files(dir.path(), "HEAD").expect("Failed to get git tree files");
+        files.sort();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].ty, FileType::Binary);
+        assert_eq!(files[1].ty, FileType::Text);
+    }
 }
