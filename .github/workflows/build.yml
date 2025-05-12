@@ -70,6 +70,9 @@ jobs:
     - name: Test
       run: cargo test --verbose --release --locked ${{ matrix.cargo_extra_flags }}
 
+    - name: Lint this repo
+      run: cargo run --release --locked -- run
+
     - name: Rename Output
       shell: pwsh
       run: Move-Item -Path "${{ matrix.output_executable }}" -Destination "target/${{ matrix.output_executable_upload_as }}"
