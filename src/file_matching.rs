@@ -66,13 +66,11 @@ mod test {
 
     #[test]
     fn test_matching_files() {
-        let files = vec![
-            FileInfo {
-                path: "foo.rs".into(),
-                ty: FileType::Text,
-                shebang: None,
-            }
-        ];
+        let files = vec![FileInfo {
+            path: "foo.rs".into(),
+            ty: FileType::Text,
+            shebang: None,
+        }];
 
         let expr = MatchExpression::Glob(glob::Pattern::new("*.rs").unwrap());
         let matches = matching_files(&files, &expr);

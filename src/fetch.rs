@@ -88,7 +88,6 @@ fn to_async_read(
 }
 
 pub async fn fetch_linters(linters: &[ConfigLinter], cache_dir: &Path) -> Result<()> {
-
     info!("Fetching linters...");
 
     // 1. Collect all the URL/binary hash pairs.

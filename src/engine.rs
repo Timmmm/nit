@@ -11,7 +11,8 @@ use wasmtime::{
     component::{Component, Linker},
 };
 use wasmtime_wasi::{
-    bindings::Command, pipe::MemoryOutputPipe, DirPerms, FilePerms, I32Exit, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView
+    DirPerms, FilePerms, I32Exit, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
+    bindings::Command, pipe::MemoryOutputPipe,
 };
 
 use crate::{

@@ -217,7 +217,6 @@ fn read_up_to(file: &mut impl std::io::Read, mut buf: &mut [u8]) -> Result<usize
     Ok(buf_len - buf.len())
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
