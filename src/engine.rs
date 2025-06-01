@@ -152,8 +152,15 @@ pub async fn run_single_linter(
                 async move { run_linter_command(top_level, &full_args, engine, component).await }
             });
 
-        // TODO (1.0): Use a smarter strategy than just hardcoding 4.
-        let max_parallelism = if metadata.require_serial { 1 } else { 4 };
+        // TODO (2.0): Add an option to explicitly set the parallelism, since
+        // this doesn't always work perfectly (see the docs for available_parallelism()).
+        let max_parallelism = if metadata.require_serial {
+            1
+        } else {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+        };
 
         // We have to run all of the tasks even of an early one fails so they
         // can fix files and find all errors.
