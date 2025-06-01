@@ -27,8 +27,6 @@ pub enum MatchExpression {
     Bool(bool),
 }
 
-// TODO (1.0): Add broad matching based on the extension, i.e. text-file extensions.
-
 /// Returns true if `file` matches `expr`.
 fn file_matches(file: &FileInfo, expr: &MatchExpression) -> bool {
     match expr {
