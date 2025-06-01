@@ -217,15 +217,20 @@ async fn run_linter_command(
 
     let run_result = command.wasi_cli_run().call_run(&mut store).await;
 
-    // The return type here is very weird.
+    // The return type here is very weird. See
+    // https://github.com/bytecodealliance/wasmtime/issues/10767
     match run_result {
         Ok(res) => res.map_err(|_| anyhow!("Unknown error running linter"))?,
         Err(error) => {
             if let Some(exit) = error.downcast_ref::<I32Exit>() {
-                info!("Call failed with exit code {:?}", exit.0);
-                return Ok(false);
+                // Err(I32Exit(0)) is actually success.
+                if exit.0 != 0 {
+                    info!("Call failed with exit code {:?}", exit.0);
+                    return Ok(false);
+                }
+            } else {
+                return Err(error);
             }
-            return Err(error);
         }
     };
 
