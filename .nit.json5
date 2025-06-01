@@ -9,6 +9,21 @@
                 },
             },
         },
+        {
+            name: "Rust",
+            location: {
+                remote: {
+                    url: "https://github.com/Timmmm/rustfmt/releases/download/wasi-0/rustfmt.wasm",
+                    hash: "a93885c2a4b3ff7cf66b8b76c6fa7b80bcb2929e636a07a3a86ceabc18783a2f",
+                },
+            },
+            override_args: {
+                extra_args: [
+                    "--edition",
+                    "2024",
+                ],
+            },
+        },
     ],
     include: {
         bool: true,
