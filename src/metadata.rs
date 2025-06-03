@@ -1,9 +1,8 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use std::path::Path;
-use wasmtime::wasmparser::{Parser, Payload};
 
-use crate::file_matching::MatchExpression;
+use crate::{file_matching::MatchExpression, wasm::find_custom_sections};
 
 #[derive(Debug, Deserialize)]
 pub struct ArgBlock {
@@ -53,35 +52,21 @@ pub struct NitMetadata {
 ///     cargo install wasm-custom-section
 ///
 pub fn read_metadata(wasm_path: &Path) -> Result<NitMetadata> {
-    let module = std::fs::read(wasm_path)?;
+    let wasm_bytes = std::fs::read(wasm_path)?;
 
     // Ideally we wouldn't load the entire file into memory, but
-    // it's probably fine in most cases and wasmparser doesn't provide
-    // a handy parse_reader() method.
+    // it's probably fine in most cases.
 
-    let parser = Parser::new(0);
-    for payload in parser.parse_all(&module) {
-        match payload? {
-            Payload::CustomSection(section) if section.name() == "nit_metadata" => {
-                return Ok(serde_json::from_slice::<NitMetadata>(section.data())
-                    .with_context(|| anyhow!("Reading metadata for {}", wasm_path.display()))?);
-            }
-            _ => {}
-        }
-    }
-    bail!("No nit_metadata section found in the wasm file");
-}
+    let (_, section_contents) = find_custom_sections(&wasm_bytes, "nit_metadata")
+        .context("Finding nit_metadata section")?;
 
-/// Return true if the file has a section called `nit_metadata`.
-pub fn has_metadata(module: &[u8]) -> Result<bool> {
-    let parser = Parser::new(0);
-    for payload in parser.parse_all(&module) {
-        match payload? {
-            Payload::CustomSection(section) if section.name() == "nit_metadata" => {
-                return Ok(true);
-            }
-            _ => {}
-        }
+    if section_contents.is_empty() {
+        bail!("No nit_metadata section found in the wasm file");
     }
-    Ok(false)
+    if section_contents.len() > 1 {
+        bail!("Multiple nit_metadata sections found in the wasm file");
+    }
+
+    Ok(serde_json::from_slice::<NitMetadata>(section_contents[0])
+        .with_context(|| anyhow!("Reading metadata for {}", wasm_path.display()))?)
 }

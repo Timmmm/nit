@@ -38,8 +38,7 @@ serde_json5 = "0.2.1"
 tokio = { version = "1.43.0", features = ["rt", "macros", "fs"] }
 tokio-util = { version = "0.7.13", features = ["io",] }
 walkdir = "2.5.0"
-wasm-gen = "0.1.4"
-wasmtime = { version = "32.0.0", features = ["reexport-wasmparser"] }
+wasmtime = { version = "32.0.0" }
 wasmtime-wasi = "32.0.0"
 
 # OpenSSL is only used on Unix. We don't want to add it as a dependency on Windows.

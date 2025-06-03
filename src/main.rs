@@ -5,11 +5,13 @@ mod fetch;
 mod file_matching;
 mod git;
 mod hash_adapter;
+mod leb128;
 mod metadata;
 mod serde_glob;
 mod serde_regex;
 mod unique_filename;
 mod wasi_cache;
+mod wasm;
 
 use anyhow::{Result, anyhow, bail};
 use bash_paths::path_to_bash_string;
@@ -21,10 +23,11 @@ use fetch::fetch_linters;
 use file_matching::retain_matching_files;
 use git::git_diff_unstaged;
 use log::info;
-use metadata::{has_metadata, read_metadata};
+use metadata::read_metadata;
 use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use wasm::{find_custom_sections, make_custom_section};
 
 #[derive(Parser)]
 #[command(
@@ -358,16 +361,20 @@ async fn subcommand_show_metadata(_cli: &Cli, args: &ShowMetadataArgs) -> Result
 }
 
 async fn subcommand_set_metadata(_cli: &Cli, args: &SetMetadataArgs) -> Result<()> {
-    // TODO (1.0): Remove any existing custom metadata sections.
-
     let mut bytes = fs::read(&args.file).await?;
-    if has_metadata(&bytes)? {
-        bail!("File already has metadata. Removing it is not yet supported.");
-    }
     let metadata_bytes = fs::read(&args.metadata).await?;
 
-    // TODO (1.0): This is simple enough we can do it without an external crate.
-    wasm_gen::write_custom_section(&mut bytes, "nit_metadata", &metadata_bytes);
+    // Find the existing metadata sections.
+    let (section_ranges, _) = find_custom_sections(&bytes, "nit_metadata")?;
+
+    // Remove them all.
+    for range in section_ranges.into_iter().rev() {
+        bytes.drain(range);
+    }
+
+    // Add a new section on the end.
+    let metadata_section = make_custom_section("nit_metadata", &metadata_bytes);
+    bytes.extend_from_slice(&metadata_section);
 
     fs::write(&args.file, bytes).await?;
 
