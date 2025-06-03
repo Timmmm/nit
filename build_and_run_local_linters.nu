@@ -18,4 +18,4 @@ cargo run -- set-metadata --metadata lints/lint_regex/metadata.json             
 # cargo run -- set-metadata --metadata lints/lint_tabs/metadata.json               target/wasm32-wasip2/release/lint_tabs.wasm
 cargo run -- set-metadata --metadata lints/lint_whitespace/metadata.json         target/wasm32-wasip2/release/lint_whitespace.wasm
 
-cargo run -- run --config .nit_local.json5
+cargo run -- --config .nit_local.json5 run
