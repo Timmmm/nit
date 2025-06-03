@@ -52,7 +52,7 @@ This is similar to pre-commit. Create a `.nit.json5` file (`.jsonc` and `.json` 
 }
 ```
 
-Then run `nit run --all` in the root of your repository. It will lint all the files in the repository. If you run `nit run` instead it will only lint the files that have changed, as determined by `git diff`.
+Then run `nit run --all` in the root of your repository. It will lint all the files in the repository. If you run `nit run` instead it will only lint staged files.
 
 To install as a git hook, run `nit install`. For compatibility with `pre-commit` this will install as a pre-commit hook by default, though I find pre-push way less annoying so I would recommend `nit install --hook-type pre-push` instead.
 
