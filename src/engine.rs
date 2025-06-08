@@ -10,9 +10,10 @@ use wasmtime::{
     Engine, Store,
     component::{Component, Linker},
 };
-use wasmtime_wasi::{
-    DirPerms, FilePerms, I32Exit, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
-    bindings::Command, pipe::MemoryOutputPipe,
+use wasmtime_wasi::{DirPerms, FilePerms, I32Exit, ResourceTable};
+
+use wasmtime_wasi::p2::{
+    IoView, WasiCtx, WasiCtxBuilder, WasiView, bindings::Command, pipe::MemoryOutputPipe,
 };
 
 use crate::{
@@ -188,7 +189,7 @@ async fn run_linter_command(
 
     let mut linker = Linker::new(&engine);
 
-    wasmtime_wasi::add_to_linker_async(&mut linker)?;
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
 
     // Allow up to 10 MB of output.
     let stdout = MemoryOutputPipe::new(10 * 1024 * 1024);
