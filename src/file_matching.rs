@@ -6,7 +6,7 @@ use crate::git::{FileInfo, FileType};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchExpression {
-    /// Matches a Glob (* and ?).
+    /// Matches a Glob (* and ? and **).
     #[serde(with = "crate::serde_glob")]
     Glob(glob::Pattern),
     /// Matches a regex on the path.
