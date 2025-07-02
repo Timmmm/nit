@@ -17,29 +17,29 @@ lto = true
 codegen-units = 1
 
 [dependencies]
-anyhow = { version = "1.0.95", features = ["backtrace"] }
-blake3 = "1.8.1"
-clap = { version = "4.5.28", features = ["derive"] }
+anyhow = { version = "1.0.98", features = ["backtrace"] }
+blake3 = "1.8.2"
+clap = { version = "4.5.40", features = ["derive"] }
 derive_more = { version = "2.0.1", features = ["display"] }
 dirs = "6.0.0"
-env_logger = "0.11.6"
+env_logger = "0.11.8"
 futures = "0.3.31"
 glob = "0.3.2"
-indicatif = { version = "0.17.11", features = ["tokio"] }
+indicatif = { version = "0.17.12", features = ["tokio"] }
 itertools = "0.14.0"
-log = "0.4.25"
-memchr = "2.7.4"
-owo-colors = { version = "4.2.0", features = ["supports-color"] }
+log = "0.4.27"
+memchr = "2.7.5"
+owo-colors = { version = "4.2.2", features = ["supports-color"] }
 regex = "1.11.1"
-reqwest = { version = "0.12.12", features = ["stream"] }
-serde = { version = "1.0.217", features = ["derive"] }
+reqwest = { version = "0.12.22", features = ["stream"] }
+serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 serde_json5 = "0.2.1"
-tokio = { version = "1.43.0", features = ["rt", "macros", "fs"] }
-tokio-util = { version = "0.7.13", features = ["io",] }
+tokio = { version = "1.46.0", features = ["rt", "macros", "fs"] }
+tokio-util = { version = "0.7.15", features = ["io",] }
 walkdir = "2.5.0"
-wasmtime = "33.0.0"
-wasmtime-wasi = "33.0.0"
+wasmtime = "34.0.1"
+wasmtime-wasi = "34.0.1"
 
 # OpenSSL is only used on Unix. We don't want to add it as a dependency on Windows.
 [target.'cfg(unix)'.dependencies]
