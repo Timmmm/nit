@@ -17,29 +17,29 @@ lto = true
 codegen-units = 1
 
 [dependencies]
-anyhow = { version = "1.0.98", features = ["backtrace"] }
+anyhow = { version = "1.0.99", features = ["backtrace"] }
 blake3 = "1.8.2"
-clap = { version = "4.5.40", features = ["derive"] }
+clap = { version = "4.5.47", features = ["derive"] }
 derive_more = { version = "2.0.1", features = ["display"] }
 dirs = "6.0.0"
 env_logger = "0.11.8"
 futures = "0.3.31"
-glob = "0.3.2"
-indicatif = { version = "0.17.12", features = ["tokio"] }
+glob = "0.3.3"
+indicatif = { version = "0.18.0", features = ["tokio"] }
 itertools = "0.14.0"
 log = "0.4.27"
 memchr = "2.7.5"
 owo-colors = { version = "4.2.2", features = ["supports-color"] }
-regex = "1.11.1"
-reqwest = { version = "0.12.22", features = ["stream"] }
+regex = "1.11.2"
+reqwest = { version = "0.12.23", features = ["stream"] }
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.140"
+serde_json = "1.0.143"
 serde_json5 = "0.2.1"
-tokio = { version = "1.46.0", features = ["rt", "macros", "fs"] }
-tokio-util = { version = "0.7.15", features = ["io",] }
+tokio = { version = "1.47.1", features = ["rt", "macros", "fs"] }
+tokio-util = { version = "0.7.16", features = ["io",] }
 walkdir = "2.5.0"
-wasmtime = "34.0.1"
-wasmtime-wasi = "34.0.1"
+wasmtime = "36.0.2"
+wasmtime-wasi = "36.0.2"
 
 # OpenSSL is only used on Unix. We don't want to add it as a dependency on Windows.
 [target.'cfg(unix)'.dependencies]
