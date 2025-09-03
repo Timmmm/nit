@@ -41,8 +41,9 @@ serde_json5 = "0.2.1"
 tokio = { version = "1.47.1", features = ["rt", "macros", "fs"] }
 tokio-util = { version = "0.7.16", features = ["io",] }
 walkdir = "2.5.0"
-wasmtime = "36.0.2"
-wasmtime-wasi = "36.0.2"
+wasmtime = "37.0.0"
+wasmtime-wasi = "37.0.0"
+wasmtime-wasi-io = "37.0.0"
 
 # OpenSSL is only used on Unix. We don't want to add it as a dependency on Windows.
 [target.'cfg(unix)'.dependencies]

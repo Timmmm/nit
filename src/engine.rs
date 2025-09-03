@@ -11,9 +11,9 @@ use wasmtime::{
     Engine, Store,
     component::{Component, Linker},
 };
-use wasmtime_wasi::{I32Exit, ResourceTable};
+use wasmtime_wasi::{I32Exit, ResourceTable, WasiCtxBuilder};
 
-use wasmtime_wasi::p2::{WasiCtxBuilder, bindings::Command, pipe::MemoryOutputPipe};
+use wasmtime_wasi::p2::{bindings::Command, pipe::MemoryOutputPipe};
 
 use crate::{
     config::{ConfigLinter, LinterLocation},
@@ -248,7 +248,7 @@ async fn run_linter_command(
     let run_result = command.wasi_cli_run().call_run(&mut store).await;
 
     // Get the modified files.
-    let modified_files: BTreeMap<PathBuf, Vec<u8>> = todo!();
+    let modified_files: BTreeMap<PathBuf, (Vec<u8>, Vec<u8>)> = todo!();
 
     // The return type here is very weird. See
     // https://github.com/bytecodealliance/wasmtime/issues/10767

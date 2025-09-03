@@ -1,20 +1,22 @@
 use std::collections::{HashMap, hash_map};
 
-use crate::wasi_gitfs::wasi_fs::{
-    self, Descriptor, FsError, FsResult, ReaddirIterator,
-    wasi::filesystem::types::{
-        Advice, DescriptorFlags, DescriptorStat, DescriptorType, DirectoryEntry, ErrorCode,
-        Filesize, MetadataHashValue, NewTimestamp, OpenFlags, PathFlags,
-    },
-};
 use anyhow::Context as _;
 use gix::{ObjectId, Repository, objs::tree::EntryKind};
 use wasmtime::component::{HasData, Linker, Resource};
 use wasmtime_wasi::{
-    ResourceTable,
-    p2::{StreamError, StreamResult, WasiCtx, WasiView},
+    ResourceTable, ResourceTableError, WasiCtx, WasiCtxView, WasiView,
+    p2::{
+        FsError, FsResult, ReaddirIterator, StreamError, StreamResult,
+        bindings::filesystem::{
+            self,
+            types::{
+                Advice, Descriptor, DescriptorFlags, DescriptorStat, DescriptorType,
+                DirectoryEntry, ErrorCode, Filesize, MetadataHashValue, NewTimestamp, OpenFlags,
+                PathFlags,
+            },
+        },
+    },
 };
-use wasmtime_wasi_io::IoView;
 
 pub struct WasiState {
     pub wasi_ctx: WasiCtx,
@@ -25,46 +27,171 @@ pub struct WasiState {
 }
 
 impl WasiView for WasiState {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi_ctx
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi_ctx,
+            table: &mut self.resource_table,
+        }
     }
 }
 
-impl IoView for WasiState {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.resource_table
-    }
+// A descriptor is the state associated with a file descriptor. It is stored
+// in the resource table. Normally this would hold any information you need
+// to access the underlying file/directory (e.g. a POSIX file descriptor).
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct MyDescriptor {
+    // What kind of Git object it is (blob, tree etc.)
+    pub kind: EntryKind,
+    // Git commit ID.
+    pub id: ObjectId,
 }
 
-// TODO: This doesn't quite work when the VFS is writable because we may have
-// two identical files which will have the same ObjectId but get written with
-// different things. We really need a set of FDs by path or something.
-// #[derive(Default)]
-// pub struct BlobContents {
-//     contents: Vec<u8>,
-//     is_modified: bool,
-// }
+// Type returned by `read_dir()` that allows iterating through directory entries.
+pub struct MyReaddirIterator {
+    pub entries: Vec<DirectoryEntry>,
+}
 
-// impl BlobContents {
-//     fn new(contents: Vec<u8>) -> Self {
-//         Self {
-//             contents,
-//             is_modified: false,
-//         }
-//     }
-// }
+trait ResourceTableExt {
+    fn push_my_descriptor(
+        &mut self,
+        my_descriptor: MyDescriptor,
+    ) -> anyhow::Result<Resource<Descriptor>>;
+    fn get_my_descriptor(
+        &self,
+        key: &Resource<Descriptor>,
+    ) -> Result<&MyDescriptor, ResourceTableError>;
+    fn get_mut_my_descriptor(
+        &mut self,
+        key: &Resource<Descriptor>,
+    ) -> Result<&mut MyDescriptor, ResourceTableError>;
+    fn delete_my_descriptor(
+        &mut self,
+        key: Resource<Descriptor>,
+    ) -> std::result::Result<MyDescriptor, ResourceTableError>;
+
+    fn push_my_readdiriterator(
+        &mut self,
+        my_readdiriterator: MyReaddirIterator,
+    ) -> anyhow::Result<Resource<ReaddirIterator>>;
+    fn get_my_readdiriterator(
+        &self,
+        key: &Resource<ReaddirIterator>,
+    ) -> Result<&MyReaddirIterator, ResourceTableError>;
+    fn get_mut_my_readdiriterator(
+        &mut self,
+        key: &Resource<ReaddirIterator>,
+    ) -> Result<&mut MyReaddirIterator, ResourceTableError>;
+    fn delete_my_readdiriterator(
+        &mut self,
+        key: Resource<ReaddirIterator>,
+    ) -> std::result::Result<MyReaddirIterator, ResourceTableError>;
+}
+
+impl ResourceTableExt for ResourceTable {
+    fn push_my_descriptor(
+        &mut self,
+        my_descriptor: MyDescriptor,
+    ) -> anyhow::Result<Resource<Descriptor>> {
+        let my_resource = self.push(my_descriptor)?;
+        Ok(if my_resource.owned() {
+            Resource::new_own(my_resource.rep())
+        } else {
+            Resource::new_borrow(my_resource.rep())
+        })
+    }
+    fn get_my_descriptor(
+        &self,
+        key: &Resource<Descriptor>,
+    ) -> Result<&MyDescriptor, ResourceTableError> {
+        let my_key = if key.owned() {
+            Resource::new_own(key.rep())
+        } else {
+            Resource::new_borrow(key.rep())
+        };
+        self.get(&my_key)
+    }
+    fn get_mut_my_descriptor(
+        &mut self,
+        key: &Resource<Descriptor>,
+    ) -> Result<&mut MyDescriptor, ResourceTableError> {
+        let my_key = if key.owned() {
+            Resource::new_own(key.rep())
+        } else {
+            Resource::new_borrow(key.rep())
+        };
+        self.get_mut(&my_key)
+    }
+    fn delete_my_descriptor(
+        &mut self,
+        key: Resource<Descriptor>,
+    ) -> std::result::Result<MyDescriptor, ResourceTableError> {
+        let my_key = if key.owned() {
+            Resource::new_own(key.rep())
+        } else {
+            Resource::new_borrow(key.rep())
+        };
+        self.delete(my_key)
+    }
+
+    fn push_my_readdiriterator(
+        &mut self,
+        my_readdiriterator: MyReaddirIterator,
+    ) -> anyhow::Result<Resource<ReaddirIterator>> {
+        let my_resource = self.push(my_readdiriterator)?;
+        Ok(if my_resource.owned() {
+            Resource::new_own(my_resource.rep())
+        } else {
+            Resource::new_borrow(my_resource.rep())
+        })
+    }
+
+    fn get_my_readdiriterator(
+        &self,
+        key: &Resource<ReaddirIterator>,
+    ) -> Result<&MyReaddirIterator, ResourceTableError> {
+        let my_key = if key.owned() {
+            Resource::new_own(key.rep())
+        } else {
+            Resource::new_borrow(key.rep())
+        };
+        self.get(&my_key)
+    }
+
+    fn get_mut_my_readdiriterator(
+        &mut self,
+        key: &Resource<ReaddirIterator>,
+    ) -> Result<&mut MyReaddirIterator, ResourceTableError> {
+        let my_key = if key.owned() {
+            Resource::new_own(key.rep())
+        } else {
+            Resource::new_borrow(key.rep())
+        };
+        self.get_mut(&my_key)
+    }
+
+    fn delete_my_readdiriterator(
+        &mut self,
+        key: Resource<ReaddirIterator>,
+    ) -> std::result::Result<MyReaddirIterator, ResourceTableError> {
+        let my_key = if key.owned() {
+            Resource::new_own(key.rep())
+        } else {
+            Resource::new_borrow(key.rep())
+        };
+        self.delete(my_key)
+    }
+}
 
 pub struct GitFs {
     // Git repository.
     pub repo: Repository,
     // Root tree object ID.
     pub tree: ObjectId,
-    // Open files/directories.
-    pub open_descriptors: HashMap<u32, >,
-    // Original blob contents. When we read a blob it goes into here.
+    // Blob contents. When we read a blob it goes into here.
+    // When we support writing we can modify them here too.
     // There's no garbage collection currently - if you open a file, read
-    // it and then close it, it will stay here.
-    // TODO (2.0): Garbage collect these using reference counting.
+    // it and then close it, it will stay here. This would be relatively easy
+    // to fix with a reference count.
     pub blob_cache: HashMap<ObjectId, Vec<u8>>,
     // Map from blob ID to its parent directory so we can implement `..` in
     // path traversal. We add to this every time we open a file.
@@ -84,10 +211,10 @@ impl GitFs {
     // For this function the target file or directory (or symlink) must exist.
     fn resolve_path(
         &mut self,
-        from: Descriptor,
+        from: MyDescriptor,
         relative_path: &str,
         follow_final_symlink: bool,
-    ) -> FsResult<Descriptor> {
+    ) -> FsResult<MyDescriptor> {
         if relative_path.starts_with('/') {
             return Err(ErrorCode::Access.into());
         }
@@ -173,14 +300,14 @@ fn gix_entry_kind_to_descriptor_type(kind: EntryKind) -> DescriptorType {
 // from which to try open_at to get more Descriptors. If we don't provide
 // anything here, none of the methods on Descriptor will ever be reachable,
 // because Resources are unforgable (the runtime will trap bogus indexes).
-impl wasi_fs::wasi::filesystem::preopens::Host for WasiState {
+impl filesystem::preopens::Host for WasiState {
     fn get_directories(&mut self) -> anyhow::Result<Vec<(Resource<Descriptor>, String)>> {
         // We have one hard-coded pre-open: `/`.
         Ok(vec![(
             // Create a new file descriptor and add it to the resource table,
             // returning its index in the table.
             self.resource_table
-                .push(Descriptor {
+                .push_my_descriptor(MyDescriptor {
                     kind: EntryKind::Tree,
                     id: self.gitfs.tree,
                 })
@@ -192,13 +319,13 @@ impl wasi_fs::wasi::filesystem::preopens::Host for WasiState {
 }
 
 // Allow performing all the usual filesystem operations on a file descriptor.
-impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
+impl filesystem::types::HostDescriptor for WasiState {
     fn read_via_stream(
         &mut self,
         fd: Resource<Descriptor>,
         offset: u64,
     ) -> FsResult<Resource<Box<(dyn wasmtime_wasi::p2::InputStream + 'static)>>> {
-        let descriptor = self.resource_table.get_mut(&fd).unwrap();
+        let descriptor = self.resource_table.get_mut_my_descriptor(&fd).unwrap();
         let data = self.gitfs.read_blob(descriptor.id)?;
         // TODO: Don't copy all the data.
         // TODO: Handle usize=32 bit. In fact, we probably can't actually read files
@@ -249,7 +376,7 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
     }
 
     async fn get_type(&mut self, fd: Resource<Descriptor>) -> FsResult<DescriptorType> {
-        let descriptor = self.resource_table.get(&fd).unwrap();
+        let descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
         Ok(gix_entry_kind_to_descriptor_type(descriptor.kind))
     }
 
@@ -272,7 +399,7 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
         length: Filesize,
         offset: Filesize,
     ) -> FsResult<(Vec<u8>, bool)> {
-        let descriptor = self.resource_table.get_mut(&fd).unwrap();
+        let descriptor = self.resource_table.get_mut_my_descriptor(&fd).unwrap();
         let blob = self.gitfs.read_blob(descriptor.id)?;
         // TODO: Handle usize properly.
         let length = length as usize;
@@ -300,7 +427,7 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
         &mut self,
         fd: Resource<Descriptor>,
     ) -> FsResult<Resource<ReaddirIterator>> {
-        let descriptor = self.resource_table.get(&fd).unwrap();
+        let descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
         // TODO: Could use `find_tree_iter()` ideally but I don't know if the
         // lifetime issues are easy to deal with, or if it makes any performance difference.
         let tree = self.gitfs.repo.find_tree(descriptor.id).unwrap();
@@ -319,7 +446,7 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
         entries.reverse();
         Ok(self
             .resource_table
-            .push(ReaddirIterator { entries })
+            .push_my_readdiriterator(MyReaddirIterator { entries })
             .unwrap())
     }
 
@@ -337,7 +464,7 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
     }
 
     async fn stat(&mut self, fd: Resource<Descriptor>) -> FsResult<DescriptorStat> {
-        let descriptor = self.resource_table.get(&fd).unwrap();
+        let descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
         Ok(DescriptorStat {
             type_: gix_entry_kind_to_descriptor_type(descriptor.kind),
             // Git doesn't support hard links and the normal case is 1, not 0.
@@ -365,7 +492,7 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
         path_flags: PathFlags,
         path: String,
     ) -> FsResult<DescriptorStat> {
-        let from_descriptor = self.resource_table.get(&fd).unwrap();
+        let from_descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
         let follow_final_symlink: bool = path_flags.contains(PathFlags::SYMLINK_FOLLOW);
         let descriptor = self
             .gitfs
@@ -434,7 +561,7 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
 
         // TODO: Handle other DescriptorFlags maybe.
 
-        let from_descriptor = self.resource_table.get(&fd).unwrap();
+        let from_descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
         let follow_final_symlink: bool = path_flags.contains(PathFlags::SYMLINK_FOLLOW);
         let descriptor = self
             .gitfs
@@ -448,11 +575,11 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
             return Err(ErrorCode::NotDirectory.into());
         }
 
-        Ok(self.resource_table.push(descriptor).unwrap())
+        Ok(self.resource_table.push_my_descriptor(descriptor).unwrap())
     }
 
     async fn readlink_at(&mut self, fd: Resource<Descriptor>, path: String) -> FsResult<String> {
-        let from_descriptor = self.resource_table.get(&fd).unwrap();
+        let from_descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
         let descriptor = self.gitfs.resolve_path(*from_descriptor, &path, false)?;
 
         if descriptor.kind != EntryKind::Link {
@@ -505,15 +632,15 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
         fd: Resource<Descriptor>,
         other: Resource<Descriptor>,
     ) -> wasmtime::Result<bool> {
-        let fd = self.resource_table.get(&fd).unwrap();
-        let other = self.resource_table.get(&other).unwrap();
+        let fd = self.resource_table.get_my_descriptor(&fd).unwrap();
+        let other = self.resource_table.get_my_descriptor(&other).unwrap();
         Ok(fd == other)
     }
 
     async fn metadata_hash(&mut self, fd: Resource<Descriptor>) -> FsResult<MetadataHashValue> {
         // Kind of unclear what the use case for this is if you ask me.
         // While this is read-only we can just return the object ID which is long enough.
-        let descriptor = self.resource_table.get(&fd).unwrap();
+        let descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
         Ok(MetadataHashValue {
             lower: u64::from_le_bytes(descriptor.id.as_bytes()[0..8].try_into().unwrap()),
             upper: u64::from_le_bytes(descriptor.id.as_bytes()[8..16].try_into().unwrap()),
@@ -528,7 +655,7 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
     ) -> FsResult<MetadataHashValue> {
         // Kind of unclear what the use case for this is if you ask me.
         // While this is read-only we can just return the object ID which is long enough.
-        let descriptor = self.resource_table.get(&fd).unwrap();
+        let descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
         Ok(MetadataHashValue {
             lower: u64::from_le_bytes(descriptor.id.as_bytes()[0..8].try_into().unwrap()),
             upper: u64::from_le_bytes(descriptor.id.as_bytes()[8..16].try_into().unwrap()),
@@ -537,32 +664,32 @@ impl wasi_fs::wasi::filesystem::types::HostDescriptor for WasiState {
 
     fn drop(&mut self, fd: Resource<Descriptor>) -> anyhow::Result<()> {
         // This will drop the `Descriptor` which should close the file.
-        self.resource_table.delete(fd)?;
+        self.resource_table.delete_my_descriptor(fd)?;
         Ok(())
     }
 }
 
 // Allow iterating through a directory returned by `read_directory()`.
-impl wasi_fs::wasi::filesystem::types::HostDirectoryEntryStream for WasiState {
+impl filesystem::types::HostDirectoryEntryStream for WasiState {
     // Get the next directory entry or None.
     async fn read_directory_entry(
         &mut self,
         stream: Resource<ReaddirIterator>,
     ) -> FsResult<Option<DirectoryEntry>> {
-        let stream = self.resource_table.get_mut(&stream).unwrap();
+        let stream = self
+            .resource_table
+            .get_mut_my_readdiriterator(&stream)
+            .unwrap();
         Ok(stream.entries.pop())
     }
 
-    fn drop(
-        &mut self,
-        stream: Resource<wasi_fs::wasi::filesystem::types::DirectoryEntryStream>,
-    ) -> anyhow::Result<()> {
-        self.resource_table.delete(stream)?;
+    fn drop(&mut self, stream: Resource<ReaddirIterator>) -> anyhow::Result<()> {
+        self.resource_table.delete_my_readdiriterator(stream)?;
         Ok(())
     }
 }
 
-impl wasi_fs::wasi::filesystem::types::Host for WasiState {
+impl filesystem::types::Host for WasiState {
     fn convert_error_code(&mut self, err: FsError) -> wasmtime::Result<ErrorCode> {
         err.downcast()
     }
@@ -628,21 +755,6 @@ impl wasmtime_wasi::p2::InputStream for ReadStream {
     }
 }
 
-// wasmtime has a super complicated nested layer of newtypes and traits to get
-// around the orphan rule:
-//
-//   IoView: trait with .table() method returning ResourceTable.
-//   WasiView: trait with .ctx() method returning WasiCtx. Inherits IoView
-//   HasData: trait with ::Data associated type.
-//
-//   IoImpl<T>: Wrapper around T implementing IoView.
-//   WasiImpl<T>: Wrapper around IoImpl<T> implementing IoView and WasiView.
-//   HasWasi<T>: Wrapper around T providing HasData trait with ::Data set to WasiImpl<T>
-//
-// I could make this generic by adding a *third* layer of newtypes (`WasiFsImpl<T>`)
-// but that just gets really complicated and this isn't a library so I'm using
-// a concrete type `WasiState` instead.
-
 struct HasWasiFs;
 
 impl HasData for HasWasiFs {
@@ -650,7 +762,7 @@ impl HasData for HasWasiFs {
 }
 
 pub fn add_to_linker_async(linker: &mut Linker<WasiState>) -> anyhow::Result<()> {
-    wasi_fs::wasi::filesystem::types::add_to_linker::<WasiState, HasWasiFs>(linker, |t| t)?;
-    wasi_fs::wasi::filesystem::preopens::add_to_linker::<WasiState, HasWasiFs>(linker, |t| t)?;
+    filesystem::types::add_to_linker::<WasiState, HasWasiFs>(linker, |t| t)?;
+    filesystem::preopens::add_to_linker::<WasiState, HasWasiFs>(linker, |t| t)?;
     Ok(())
 }
