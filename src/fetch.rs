@@ -96,6 +96,8 @@ pub async fn fetch_linters(linters: &[ConfigLinter], cache_dir: &Path) -> Result
     // 3. Check which ones are already downloaded.
     // 4. Download the missing ones atomically.
 
+    // TODO: We kind of need a task graph thingy with support for progress bars. Surely a library like that exists?
+
     let mut url_to_hash = BTreeMap::new();
     for linter in linters {
         // Don't need to download local linters.

@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow, bail};
+use gix::ObjectId;
 use itertools::Itertools as _;
 use serde::Deserialize;
 
@@ -109,23 +110,6 @@ pub fn git_staged_files(top_level: &Path) -> Result<Vec<FileInfo>> {
     process_file_info(top_level, &command.stdout)
 }
 
-/// List of files changed in the working directory (not staged).
-pub fn git_diff_unstaged(top_level: &Path) -> Result<Vec<u8>> {
-    let output = std::process::Command::new("git")
-        .args(&[
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--ignore-submodules",
-        ])
-        .current_dir(top_level)
-        .output()?;
-    if !output.status.success() {
-        bail!("git diff command failed");
-    }
-    Ok(output.stdout)
-}
-
 fn process_file_info(top_level: &Path, ls_files_stdout: &[u8]) -> Result<Vec<FileInfo>> {
     ls_files_stdout
         .split(|&b| b == 0)
@@ -215,6 +199,24 @@ fn read_up_to(file: &mut impl std::io::Read, mut buf: &mut [u8]) -> Result<usize
         }
     }
     Ok(buf_len - buf.len())
+}
+
+/// Write the index (staging area) to a tree object and return its Hash.
+pub fn git_write_tree(top_level: &Path) -> Result<ObjectId> {
+    // pre-commit uses git ls-files to get the list of all files.
+    // It uses git diff --names-only for changed files but I'm not sure exactly how it gets the from/to refs if you don't specify them.
+
+    let command = Command::new("git")
+        .arg("write-tree")
+        .current_dir(top_level)
+        .output()
+        .context("Failed to run git write-tree")?;
+
+    if !command.status.success() {
+        bail!("git write-tree command failed");
+    }
+
+    Ok(ObjectId::from_hex(command.stdout.trim_ascii())?)
 }
 
 #[cfg(test)]

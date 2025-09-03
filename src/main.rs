@@ -11,6 +11,7 @@ mod serde_glob;
 mod serde_regex;
 mod unique_filename;
 mod wasi_cache;
+mod wasi_gitfs;
 mod wasm;
 
 use anyhow::{Result, anyhow, bail};
@@ -21,13 +22,14 @@ use engine::{get_cache_dir, run_single_linter};
 use env_logger::{Builder, Env};
 use fetch::fetch_linters;
 use file_matching::retain_matching_files;
-use git::git_diff_unstaged;
 use log::info;
 use metadata::read_metadata;
 use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use wasm::{find_custom_sections, make_custom_section};
+
+use crate::git::git_write_tree;
 
 #[derive(Parser)]
 #[command(
@@ -92,11 +94,10 @@ struct RunArgs {
 
     #[arg(long)]
     show_diff_on_failure: bool,
-    // TODO (2.0): Add an option not to fix the files. Hooks will always fix files
-    // but we can write a VFS layer for WASI that doesn't write the files back
-    // to disk if this option is set.
-    // #[arg(long)]
-    // no_fix: bool,
+
+    /// Don't fix files.
+    #[arg(long)]
+    no_fix: bool,
 }
 
 #[derive(Parser)]
@@ -305,46 +306,56 @@ async fn subcommand_run(cli: &Cli, args: &RunArgs) -> Result<()> {
         git::git_staged_files(&top_level)?
     };
 
-    run(top_level, config, files).await
+    run(top_level, config, files, !args.no_fix).await
 }
 
 async fn run(
     top_level: PathBuf,
     config: Config,
     mut files: Vec<git::FileInfo>,
+    fix_files: bool,
 ) -> std::result::Result<(), anyhow::Error> {
     let cache_dir = get_cache_dir().ok_or(anyhow!("Could not determine cache directory"))?;
 
     // Only lint files in `include`.
     retain_matching_files(&mut files, &config.include);
 
-    // 0. Determine the changed files (or find all files).
-    // 1. Download the wasm binary (if required).
-    // 2. Load it.
-    // 3. Run it with `--config` to determine how we should feed it files.
-    //      - chunked filenames (chunk length = 0 for all)
-    //      - don't feed it anything (e.g. for cargo fmt)
-    // 4. Run it over the changed files.
-
     fetch_linters(&config.linters, &cache_dir).await?;
-
-    let mut diff = git_diff_unstaged(&top_level)?;
 
     let mut failed = false;
 
-    // Run the linters.
+    // So, ideally our Git VFS would be able to expose the index too, but I haven't
+    // done that yet and it's a lot simpler to always work on tree objects so
+    // we will pre-emptively write the index to a tree. Git will do this anyway
+    // later. It's not ideal because we don't really want to do this yet but eh.
+    let tree = git_write_tree(&top_level)?;
+
+    // TODO (1.0): Now that we have the Git VFS we don't need to wait for
+    // all of the linters to download before we run them.
+
+    // Run the linters. We can do it in parallel because they are writing
+    // to an in-memory VFS; not to disk.
     for linter in config.linters {
         eprintln!("Running linter: {}", linter.name.blue());
-        let status = run_single_linter(&files, &cache_dir, &top_level, linter).await?;
-        let new_diff = git_diff_unstaged(&top_level)?;
+        let result = run_single_linter(&files, &cache_dir, &top_level, linter, tree).await?;
 
-        if !status || diff != new_diff {
+        if !result.success || !result.modified_files.is_empty() {
             failed = true;
             eprintln!("Linter {}", "failed".red());
+            if fix_files {
+                // Write modified files if they were unchanged from the version in the tree.
+                for (path, (original_contents, modified_contents)) in
+                    result.modified_files.into_iter()
+                {
+                    let current_contents = fs::read(&path).await?;
+                    if current_contents == original_contents {
+                        fs::write(&path, modified_contents).await?;
+                    }
+                }
+            }
         } else {
             eprintln!("Linter {}", "passed".green());
         }
-        diff = new_diff;
     }
 
     if failed {
@@ -391,7 +402,8 @@ async fn subcommand_pre_commit(cli: &Cli) -> Result<()> {
 
     let files = git::git_staged_files(&top_level)?;
 
-    run(top_level, config, files).await
+    // TODO (1.0): Support installing `nit` with the --no-fix flag set.
+    run(top_level, config, files, false).await
 }
 
 async fn subcommand_pre_push(cli: &Cli, args: &PrePushArgs) -> Result<()> {
