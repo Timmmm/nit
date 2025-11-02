@@ -44,6 +44,7 @@ walkdir = "2.5.0"
 wasmtime = "37.0.0"
 wasmtime-wasi = "37.0.0"
 wasmtime-wasi-io = "37.0.0"
+slab = "0.4.11"
 
 # OpenSSL is only used on Unix. We don't want to add it as a dependency on Windows.
 [target.'cfg(unix)'.dependencies]

@@ -234,7 +234,7 @@ async fn run_linter_command(
         gitfs: GitFs {
             repo,
             tree,
-            blob_cache: Default::default(),
+            blob_contents: Default::default(),
             parent: Default::default(),
         },
     };

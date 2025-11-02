@@ -1,4 +1,4 @@
-use std::collections::{HashMap, hash_map};
+use std::collections::{BTreeMap, HashMap, hash_map};
 
 use anyhow::Context as _;
 use gix::{ObjectId, Repository, objs::tree::EntryKind};
@@ -39,7 +39,11 @@ impl WasiView for WasiState {
 // in the resource table. Normally this would hold any information you need
 // to access the underlying file/directory (e.g. a POSIX file descriptor).
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub struct MyDescriptor {
+pub struct GitFsDescriptor {
+    /// TODO: Need a way to refer to a specific DirectoryOrFile.
+    /// We'll also need a way to get a parent of DirectoryOrFile.
+    /// Could use an arena an indices I guess?
+
     // What kind of Git object it is (blob, tree etc.)
     pub kind: EntryKind,
     // Git commit ID.
@@ -47,62 +51,62 @@ pub struct MyDescriptor {
 }
 
 // Type returned by `read_dir()` that allows iterating through directory entries.
-pub struct MyReaddirIterator {
+pub struct GitFsReaddirIterator {
     pub entries: Vec<DirectoryEntry>,
 }
 
 trait ResourceTableExt {
-    fn push_my_descriptor(
+    fn push_gitfs_descriptor(
         &mut self,
-        my_descriptor: MyDescriptor,
+        gitfs_descriptor: GitFsDescriptor,
     ) -> anyhow::Result<Resource<Descriptor>>;
-    fn get_my_descriptor(
+    fn get_gitfs_descriptor(
         &self,
         key: &Resource<Descriptor>,
-    ) -> Result<&MyDescriptor, ResourceTableError>;
-    fn get_mut_my_descriptor(
+    ) -> Result<&GitFsDescriptor, ResourceTableError>;
+    fn get_mut_gitfs_descriptor(
         &mut self,
         key: &Resource<Descriptor>,
-    ) -> Result<&mut MyDescriptor, ResourceTableError>;
-    fn delete_my_descriptor(
+    ) -> Result<&mut GitFsDescriptor, ResourceTableError>;
+    fn delete_gitfs_descriptor(
         &mut self,
         key: Resource<Descriptor>,
-    ) -> std::result::Result<MyDescriptor, ResourceTableError>;
+    ) -> std::result::Result<GitFsDescriptor, ResourceTableError>;
 
-    fn push_my_readdiriterator(
+    fn push_gitfs_readdiriterator(
         &mut self,
-        my_readdiriterator: MyReaddirIterator,
+        gitfs_readdiriterator: GitFsReaddirIterator,
     ) -> anyhow::Result<Resource<ReaddirIterator>>;
-    fn get_my_readdiriterator(
+    fn get_gitfs_readdiriterator(
         &self,
         key: &Resource<ReaddirIterator>,
-    ) -> Result<&MyReaddirIterator, ResourceTableError>;
-    fn get_mut_my_readdiriterator(
+    ) -> Result<&GitFsReaddirIterator, ResourceTableError>;
+    fn get_mut_gitfs_readdiriterator(
         &mut self,
         key: &Resource<ReaddirIterator>,
-    ) -> Result<&mut MyReaddirIterator, ResourceTableError>;
-    fn delete_my_readdiriterator(
+    ) -> Result<&mut GitFsReaddirIterator, ResourceTableError>;
+    fn delete_gitfs_readdiriterator(
         &mut self,
         key: Resource<ReaddirIterator>,
-    ) -> std::result::Result<MyReaddirIterator, ResourceTableError>;
+    ) -> std::result::Result<GitFsReaddirIterator, ResourceTableError>;
 }
 
 impl ResourceTableExt for ResourceTable {
-    fn push_my_descriptor(
+    fn push_gitfs_descriptor(
         &mut self,
-        my_descriptor: MyDescriptor,
+        gitfs_descriptor: GitFsDescriptor,
     ) -> anyhow::Result<Resource<Descriptor>> {
-        let my_resource = self.push(my_descriptor)?;
+        let my_resource = self.push(gitfs_descriptor)?;
         Ok(if my_resource.owned() {
             Resource::new_own(my_resource.rep())
         } else {
             Resource::new_borrow(my_resource.rep())
         })
     }
-    fn get_my_descriptor(
+    fn get_gitfs_descriptor(
         &self,
         key: &Resource<Descriptor>,
-    ) -> Result<&MyDescriptor, ResourceTableError> {
+    ) -> Result<&GitFsDescriptor, ResourceTableError> {
         let my_key = if key.owned() {
             Resource::new_own(key.rep())
         } else {
@@ -110,10 +114,10 @@ impl ResourceTableExt for ResourceTable {
         };
         self.get(&my_key)
     }
-    fn get_mut_my_descriptor(
+    fn get_mut_gitfs_descriptor(
         &mut self,
         key: &Resource<Descriptor>,
-    ) -> Result<&mut MyDescriptor, ResourceTableError> {
+    ) -> Result<&mut GitFsDescriptor, ResourceTableError> {
         let my_key = if key.owned() {
             Resource::new_own(key.rep())
         } else {
@@ -121,10 +125,10 @@ impl ResourceTableExt for ResourceTable {
         };
         self.get_mut(&my_key)
     }
-    fn delete_my_descriptor(
+    fn delete_gitfs_descriptor(
         &mut self,
         key: Resource<Descriptor>,
-    ) -> std::result::Result<MyDescriptor, ResourceTableError> {
+    ) -> std::result::Result<GitFsDescriptor, ResourceTableError> {
         let my_key = if key.owned() {
             Resource::new_own(key.rep())
         } else {
@@ -133,11 +137,11 @@ impl ResourceTableExt for ResourceTable {
         self.delete(my_key)
     }
 
-    fn push_my_readdiriterator(
+    fn push_gitfs_readdiriterator(
         &mut self,
-        my_readdiriterator: MyReaddirIterator,
+        gitfs_readdiriterator: GitFsReaddirIterator,
     ) -> anyhow::Result<Resource<ReaddirIterator>> {
-        let my_resource = self.push(my_readdiriterator)?;
+        let my_resource = self.push(gitfs_readdiriterator)?;
         Ok(if my_resource.owned() {
             Resource::new_own(my_resource.rep())
         } else {
@@ -145,10 +149,10 @@ impl ResourceTableExt for ResourceTable {
         })
     }
 
-    fn get_my_readdiriterator(
+    fn get_gitfs_readdiriterator(
         &self,
         key: &Resource<ReaddirIterator>,
-    ) -> Result<&MyReaddirIterator, ResourceTableError> {
+    ) -> Result<&GitFsReaddirIterator, ResourceTableError> {
         let my_key = if key.owned() {
             Resource::new_own(key.rep())
         } else {
@@ -157,10 +161,10 @@ impl ResourceTableExt for ResourceTable {
         self.get(&my_key)
     }
 
-    fn get_mut_my_readdiriterator(
+    fn get_mut_gitfs_readdiriterator(
         &mut self,
         key: &Resource<ReaddirIterator>,
-    ) -> Result<&mut MyReaddirIterator, ResourceTableError> {
+    ) -> Result<&mut GitFsReaddirIterator, ResourceTableError> {
         let my_key = if key.owned() {
             Resource::new_own(key.rep())
         } else {
@@ -169,10 +173,10 @@ impl ResourceTableExt for ResourceTable {
         self.get_mut(&my_key)
     }
 
-    fn delete_my_readdiriterator(
+    fn delete_gitfs_readdiriterator(
         &mut self,
         key: Resource<ReaddirIterator>,
-    ) -> std::result::Result<MyReaddirIterator, ResourceTableError> {
+    ) -> std::result::Result<GitFsReaddirIterator, ResourceTableError> {
         let my_key = if key.owned() {
             Resource::new_own(key.rep())
         } else {
@@ -182,26 +186,40 @@ impl ResourceTableExt for ResourceTable {
     }
 }
 
+
 pub struct GitFs {
     // Git repository.
-    pub repo: Repository,
-    // Root tree object ID.
-    pub tree: ObjectId,
-    // Blob contents. When we read a blob it goes into here.
-    // When we support writing we can modify them here too.
+    repo: Repository,
+
+    // Root directory
+    root: Directory,
+
+    // Original blob content by git hash ID. When we read a blob it goes into here.
+    // When we write one it goes into somewhere else...
     // There's no garbage collection currently - if you open a file, read
     // it and then close it, it will stay here. This would be relatively easy
     // to fix with a reference count.
-    pub blob_cache: HashMap<ObjectId, Vec<u8>>,
+    blob_contents: HashMap<ObjectId, Vec<u8>>,
+
     // Map from blob ID to its parent directory so we can implement `..` in
     // path traversal. We add to this every time we open a file.
     // There's no garbage collection currently - if you open a directory
     // and close it this will stay here. This would be relatively easy to fix
     // with a reference count, but it's probably not worth it in this case.
-    pub parent: HashMap<ObjectId, ObjectId>,
+    parent: HashMap<ObjectId, ObjectId>,
 }
 
 impl GitFs {
+    // Create a new GitFs instance.
+    fn new(repo: Repository, tree: ObjectId) -> Self {
+        Self {
+            repo,
+            root: Directory::Unopened(tree),
+            blob_contents: HashMap::new(),
+            parent: HashMap::new(),
+        }
+    }
+
     // Follow a path relative to an existing file or directory.
     // See https://pubs.opengroup.org/onlinepubs/9799919799/ for details about
     // POSIX's mad pathname resolution, and https://github.com/WebAssembly/wasi-filesystem/blob/main/path-resolution.md
@@ -211,10 +229,10 @@ impl GitFs {
     // For this function the target file or directory (or symlink) must exist.
     fn resolve_path(
         &mut self,
-        from: MyDescriptor,
+        from: GitFsDescriptor,
         relative_path: &str,
         follow_final_symlink: bool,
-    ) -> FsResult<MyDescriptor> {
+    ) -> FsResult<GitFsDescriptor> {
         if relative_path.starts_with('/') {
             return Err(ErrorCode::Access.into());
         }
@@ -275,7 +293,7 @@ impl GitFs {
     // Read a full blob (the only API Gix gives because it may be compressed
     // or based on diffs). It is cached.
     fn read_blob(&mut self, id: ObjectId) -> FsResult<&[u8]> {
-        match self.blob_cache.entry(id) {
+        match self.blob_contents.entry(id) {
             hash_map::Entry::Vacant(vacant_entry) => {
                 let mut blob = self.repo.find_blob(id).map_err(|_| ErrorCode::NoEntry)?;
                 let data = blob.take_data();
@@ -307,7 +325,7 @@ impl filesystem::preopens::Host for WasiState {
             // Create a new file descriptor and add it to the resource table,
             // returning its index in the table.
             self.resource_table
-                .push_my_descriptor(MyDescriptor {
+                .push_gitfs_descriptor(GitFsDescriptor {
                     kind: EntryKind::Tree,
                     id: self.gitfs.tree,
                 })
@@ -325,7 +343,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         fd: Resource<Descriptor>,
         offset: u64,
     ) -> FsResult<Resource<Box<(dyn wasmtime_wasi::p2::InputStream + 'static)>>> {
-        let descriptor = self.resource_table.get_mut_my_descriptor(&fd).unwrap();
+        let descriptor = self.resource_table.get_mut_gitfs_descriptor(&fd).unwrap();
         let data = self.gitfs.read_blob(descriptor.id)?;
         // TODO: Don't copy all the data.
         // TODO: Handle usize=32 bit. In fact, we probably can't actually read files
@@ -376,7 +394,7 @@ impl filesystem::types::HostDescriptor for WasiState {
     }
 
     async fn get_type(&mut self, fd: Resource<Descriptor>) -> FsResult<DescriptorType> {
-        let descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
+        let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
         Ok(gix_entry_kind_to_descriptor_type(descriptor.kind))
     }
 
@@ -399,7 +417,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         length: Filesize,
         offset: Filesize,
     ) -> FsResult<(Vec<u8>, bool)> {
-        let descriptor = self.resource_table.get_mut_my_descriptor(&fd).unwrap();
+        let descriptor = self.resource_table.get_mut_gitfs_descriptor(&fd).unwrap();
         let blob = self.gitfs.read_blob(descriptor.id)?;
         // TODO: Handle usize properly.
         let length = length as usize;
@@ -427,7 +445,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         &mut self,
         fd: Resource<Descriptor>,
     ) -> FsResult<Resource<ReaddirIterator>> {
-        let descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
+        let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
         // TODO: Could use `find_tree_iter()` ideally but I don't know if the
         // lifetime issues are easy to deal with, or if it makes any performance difference.
         let tree = self.gitfs.repo.find_tree(descriptor.id).unwrap();
@@ -446,7 +464,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         entries.reverse();
         Ok(self
             .resource_table
-            .push_my_readdiriterator(MyReaddirIterator { entries })
+            .push_gitfs_readdiriterator(GitFsReaddirIterator { entries })
             .unwrap())
     }
 
@@ -464,7 +482,7 @@ impl filesystem::types::HostDescriptor for WasiState {
     }
 
     async fn stat(&mut self, fd: Resource<Descriptor>) -> FsResult<DescriptorStat> {
-        let descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
+        let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
         Ok(DescriptorStat {
             type_: gix_entry_kind_to_descriptor_type(descriptor.kind),
             // Git doesn't support hard links and the normal case is 1, not 0.
@@ -492,7 +510,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         path_flags: PathFlags,
         path: String,
     ) -> FsResult<DescriptorStat> {
-        let from_descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
+        let from_descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
         let follow_final_symlink: bool = path_flags.contains(PathFlags::SYMLINK_FOLLOW);
         let descriptor = self
             .gitfs
@@ -561,7 +579,7 @@ impl filesystem::types::HostDescriptor for WasiState {
 
         // TODO: Handle other DescriptorFlags maybe.
 
-        let from_descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
+        let from_descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
         let follow_final_symlink: bool = path_flags.contains(PathFlags::SYMLINK_FOLLOW);
         let descriptor = self
             .gitfs
@@ -575,11 +593,11 @@ impl filesystem::types::HostDescriptor for WasiState {
             return Err(ErrorCode::NotDirectory.into());
         }
 
-        Ok(self.resource_table.push_my_descriptor(descriptor).unwrap())
+        Ok(self.resource_table.push_gitfs_descriptor(descriptor).unwrap())
     }
 
     async fn readlink_at(&mut self, fd: Resource<Descriptor>, path: String) -> FsResult<String> {
-        let from_descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
+        let from_descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
         let descriptor = self.gitfs.resolve_path(*from_descriptor, &path, false)?;
 
         if descriptor.kind != EntryKind::Link {
@@ -632,15 +650,15 @@ impl filesystem::types::HostDescriptor for WasiState {
         fd: Resource<Descriptor>,
         other: Resource<Descriptor>,
     ) -> wasmtime::Result<bool> {
-        let fd = self.resource_table.get_my_descriptor(&fd).unwrap();
-        let other = self.resource_table.get_my_descriptor(&other).unwrap();
+        let fd = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
+        let other = self.resource_table.get_gitfs_descriptor(&other).unwrap();
         Ok(fd == other)
     }
 
     async fn metadata_hash(&mut self, fd: Resource<Descriptor>) -> FsResult<MetadataHashValue> {
         // Kind of unclear what the use case for this is if you ask me.
         // While this is read-only we can just return the object ID which is long enough.
-        let descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
+        let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
         Ok(MetadataHashValue {
             lower: u64::from_le_bytes(descriptor.id.as_bytes()[0..8].try_into().unwrap()),
             upper: u64::from_le_bytes(descriptor.id.as_bytes()[8..16].try_into().unwrap()),
@@ -655,7 +673,7 @@ impl filesystem::types::HostDescriptor for WasiState {
     ) -> FsResult<MetadataHashValue> {
         // Kind of unclear what the use case for this is if you ask me.
         // While this is read-only we can just return the object ID which is long enough.
-        let descriptor = self.resource_table.get_my_descriptor(&fd).unwrap();
+        let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
         Ok(MetadataHashValue {
             lower: u64::from_le_bytes(descriptor.id.as_bytes()[0..8].try_into().unwrap()),
             upper: u64::from_le_bytes(descriptor.id.as_bytes()[8..16].try_into().unwrap()),
@@ -664,7 +682,7 @@ impl filesystem::types::HostDescriptor for WasiState {
 
     fn drop(&mut self, fd: Resource<Descriptor>) -> anyhow::Result<()> {
         // This will drop the `Descriptor` which should close the file.
-        self.resource_table.delete_my_descriptor(fd)?;
+        self.resource_table.delete_gitfs_descriptor(fd)?;
         Ok(())
     }
 }
@@ -678,13 +696,13 @@ impl filesystem::types::HostDirectoryEntryStream for WasiState {
     ) -> FsResult<Option<DirectoryEntry>> {
         let stream = self
             .resource_table
-            .get_mut_my_readdiriterator(&stream)
+            .get_mut_gitfs_readdiriterator(&stream)
             .unwrap();
         Ok(stream.entries.pop())
     }
 
     fn drop(&mut self, stream: Resource<ReaddirIterator>) -> anyhow::Result<()> {
-        self.resource_table.delete_my_readdiriterator(stream)?;
+        self.resource_table.delete_gitfs_readdiriterator(stream)?;
         Ok(())
     }
 }
