@@ -43,7 +43,6 @@ pub struct GitFsDescriptor {
     /// TODO: Need a way to refer to a specific DirectoryOrFile.
     /// We'll also need a way to get a parent of DirectoryOrFile.
     /// Could use an arena an indices I guess?
-
     // What kind of Git object it is (blob, tree etc.)
     pub kind: EntryKind,
     // Git commit ID.
@@ -185,7 +184,6 @@ impl ResourceTableExt for ResourceTable {
         self.delete(my_key)
     }
 }
-
 
 pub struct GitFs {
     // Git repository.
@@ -593,7 +591,10 @@ impl filesystem::types::HostDescriptor for WasiState {
             return Err(ErrorCode::NotDirectory.into());
         }
 
-        Ok(self.resource_table.push_gitfs_descriptor(descriptor).unwrap())
+        Ok(self
+            .resource_table
+            .push_gitfs_descriptor(descriptor)
+            .unwrap())
     }
 
     async fn readlink_at(&mut self, fd: Resource<Descriptor>, path: String) -> FsResult<String> {

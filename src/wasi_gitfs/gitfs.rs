@@ -30,7 +30,7 @@ struct FileTable {
     // We read the entire file into memory when it is read or written for
     // the first time.
     // TODO: Add link count to File.
-    file: Slab<File>, // Indexed by FileId.
+    file: Slab<File>,             // Indexed by FileId.
     directories: Slab<Directory>, // Indexed by DirectoryId.
 
     // Open files and directories. A file descriptor is an index into this table.
