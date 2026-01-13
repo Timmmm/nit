@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, hash_map};
+use std::collections::{HashMap, hash_map};
 
 use anyhow::Context as _;
 use gix::{ObjectId, Repository, objs::tree::EntryKind};
@@ -22,7 +22,8 @@ pub struct WasiState {
     pub wasi_ctx: WasiCtx,
     // This is basically a `Vec<any>`.
     pub resource_table: ResourceTable,
-    // The git filesystem.
+    // The git filesystem. This is a *mutable* filesystem backed by a Git repository.
+    // It also records changes compared to the initial state.
     pub gitfs: GitFs,
 }
 
@@ -193,18 +194,11 @@ pub struct GitFs {
     root: Directory,
 
     // Original blob content by git hash ID. When we read a blob it goes into here.
-    // When we write one it goes into somewhere else...
+    // We use copy-on-write so when a file is written we copy its data out of here.
     // There's no garbage collection currently - if you open a file, read
     // it and then close it, it will stay here. This would be relatively easy
     // to fix with a reference count.
     blob_contents: HashMap<ObjectId, Vec<u8>>,
-
-    // Map from blob ID to its parent directory so we can implement `..` in
-    // path traversal. We add to this every time we open a file.
-    // There's no garbage collection currently - if you open a directory
-    // and close it this will stay here. This would be relatively easy to fix
-    // with a reference count, but it's probably not worth it in this case.
-    parent: HashMap<ObjectId, ObjectId>,
 }
 
 impl GitFs {
