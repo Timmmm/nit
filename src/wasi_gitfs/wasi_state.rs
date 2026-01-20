@@ -18,6 +18,8 @@ use wasmtime_wasi::{
     },
 };
 
+use crate::wasi_gitfs::gitfs::{GitFs, Inode, Node, ROOT_INODE};
+
 pub struct WasiState {
     pub wasi_ctx: WasiCtx,
     // This is basically a `Vec<any>`.
@@ -39,15 +41,11 @@ impl WasiView for WasiState {
 // A descriptor is the state associated with a file descriptor. It is stored
 // in the resource table. Normally this would hold any information you need
 // to access the underlying file/directory (e.g. a POSIX file descriptor).
+//
+// In our case it *is* the file descriptor, and it contains the inode index.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct GitFsDescriptor {
-    /// TODO: Need a way to refer to a specific DirectoryOrFile.
-    /// We'll also need a way to get a parent of DirectoryOrFile.
-    /// Could use an arena an indices I guess?
-    // What kind of Git object it is (blob, tree etc.)
-    pub kind: EntryKind,
-    // Git commit ID.
-    pub id: ObjectId,
+    pub inode: Inode,
 }
 
 // Type returned by `read_dir()` that allows iterating through directory entries.
@@ -186,116 +184,6 @@ impl ResourceTableExt for ResourceTable {
     }
 }
 
-pub struct GitFs {
-    // Git repository.
-    repo: Repository,
-
-    // Root directory
-    root: Directory,
-
-    // Original blob content by git hash ID. When we read a blob it goes into here.
-    // We use copy-on-write so when a file is written we copy its data out of here.
-    // There's no garbage collection currently - if you open a file, read
-    // it and then close it, it will stay here. This would be relatively easy
-    // to fix with a reference count.
-    blob_contents: HashMap<ObjectId, Vec<u8>>,
-}
-
-impl GitFs {
-    // Create a new GitFs instance.
-    fn new(repo: Repository, tree: ObjectId) -> Self {
-        Self {
-            repo,
-            root: Directory::Unopened(tree),
-            blob_contents: HashMap::new(),
-            parent: HashMap::new(),
-        }
-    }
-
-    // Follow a path relative to an existing file or directory.
-    // See https://pubs.opengroup.org/onlinepubs/9799919799/ for details about
-    // POSIX's mad pathname resolution, and https://github.com/WebAssembly/wasi-filesystem/blob/main/path-resolution.md
-    // for WASI specifically.
-    //
-    // Only relative paths are allowed. Absolute paths cause a permission error.
-    // For this function the target file or directory (or symlink) must exist.
-    fn resolve_path(
-        &mut self,
-        from: GitFsDescriptor,
-        relative_path: &str,
-        follow_final_symlink: bool,
-    ) -> FsResult<GitFsDescriptor> {
-        if relative_path.starts_with('/') {
-            return Err(ErrorCode::Access.into());
-        }
-
-        let mut descriptor = from;
-
-        // TODO: Allow a maximum of 40 symlink follows. Based on this value
-        // https://github.com/wasix-org/wasix-libc/blob/28158c2ece7401604a9f6a409be320b47fffe78e/expected/wasm32-wasi/predefined-macros.txt#L4617
-        let mut symlink_follow_remaining = 40;
-
-        // So we can handle the last component separately.
-        for component in relative_path.split('/') {
-            match descriptor.kind {
-                EntryKind::Tree => {
-                    match component {
-                        // Either two consecutive slashes "foo/bar//baz" or a trailing slash "foo/bar/".
-                        "" => continue,
-                        "." => continue,
-                        ".." => {
-                            // If there's no parent we're trying to .. above the root, which is not allowed by WASI.
-                            descriptor.id =
-                                *self.parent.get(&descriptor.id).ok_or(ErrorCode::Access)?;
-                            // Parent directory must be a directory.
-                            descriptor.kind = EntryKind::Tree;
-                        }
-                        // Named child.
-                        _ => {
-                            // Open the current directory and find the child component.
-                            let tree = self
-                                .repo
-                                .find_tree(descriptor.id)
-                                .map_err(|_| ErrorCode::NoEntry)?;
-                            // Find the child object.
-                            let entry = tree.find_entry(component).ok_or(ErrorCode::NoEntry)?;
-
-                            descriptor.id = entry.id().detach();
-                            descriptor.kind = entry.kind();
-                        }
-                    }
-                }
-                EntryKind::Blob | EntryKind::BlobExecutable => {
-                    // Can't get a child of a file.
-                    return Err(ErrorCode::NotDirectory.into());
-                }
-                EntryKind::Link => {
-                    todo!("symlink support")
-                }
-                EntryKind::Commit => todo!(),
-            }
-        }
-
-        if descriptor.kind == EntryKind::Link && follow_final_symlink {
-            todo!("symlink support")
-        }
-        Ok(descriptor)
-    }
-
-    // Read a full blob (the only API Gix gives because it may be compressed
-    // or based on diffs). It is cached.
-    fn read_blob(&mut self, id: ObjectId) -> FsResult<&[u8]> {
-        match self.blob_contents.entry(id) {
-            hash_map::Entry::Vacant(vacant_entry) => {
-                let mut blob = self.repo.find_blob(id).map_err(|_| ErrorCode::NoEntry)?;
-                let data = blob.take_data();
-                Ok(vacant_entry.insert(data))
-            }
-            hash_map::Entry::Occupied(occupied_entry) => Ok(occupied_entry.into_mut()),
-        }
-    }
-}
-
 fn gix_entry_kind_to_descriptor_type(kind: EntryKind) -> DescriptorType {
     match kind {
         EntryKind::Tree => DescriptorType::Directory,
@@ -317,10 +205,7 @@ impl filesystem::preopens::Host for WasiState {
             // Create a new file descriptor and add it to the resource table,
             // returning its index in the table.
             self.resource_table
-                .push_gitfs_descriptor(GitFsDescriptor {
-                    kind: EntryKind::Tree,
-                    id: self.gitfs.tree,
-                })
+                .push_gitfs_descriptor(GitFsDescriptor { inode: ROOT_INODE })
                 .with_context(|| format!("failed to push root preopen"))?,
             // Path
             "/".to_string(),
@@ -336,7 +221,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         offset: u64,
     ) -> FsResult<Resource<Box<(dyn wasmtime_wasi::p2::InputStream + 'static)>>> {
         let descriptor = self.resource_table.get_mut_gitfs_descriptor(&fd).unwrap();
-        let data = self.gitfs.read_blob(descriptor.id)?;
+        let data = self.gitfs.read_file(descriptor.inode)?;
         // TODO: Don't copy all the data.
         // TODO: Handle usize=32 bit. In fact, we probably can't actually read files
         // stored in Git that are more than 4 GB?
@@ -354,14 +239,14 @@ impl filesystem::types::HostDescriptor for WasiState {
         _fd: Resource<Descriptor>,
         _offset: u64,
     ) -> FsResult<Resource<Box<(dyn wasmtime_wasi::p2::OutputStream + 'static)>>> {
-        Err(ErrorCode::ReadOnly.into())
+        todo!();
     }
 
     fn append_via_stream(
         &mut self,
         _fd: Resource<Descriptor>,
     ) -> FsResult<Resource<Box<(dyn wasmtime_wasi::p2::OutputStream + 'static)>>> {
-        Err(ErrorCode::ReadOnly.into())
+        todo!();
     }
 
     async fn advise(
@@ -376,7 +261,7 @@ impl filesystem::types::HostDescriptor for WasiState {
     }
 
     async fn sync_data(&mut self, _fd: Resource<Descriptor>) -> FsResult<()> {
-        //  Sync not needed.
+        // Sync not needed.
         Ok(())
     }
 
@@ -387,11 +272,15 @@ impl filesystem::types::HostDescriptor for WasiState {
 
     async fn get_type(&mut self, fd: Resource<Descriptor>) -> FsResult<DescriptorType> {
         let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
-        Ok(gix_entry_kind_to_descriptor_type(descriptor.kind))
+        let ty = match self.gitfs.get_node(descriptor.inode)? {
+            Node::File(_) => DescriptorType::RegularFile,
+            Node::Directory(_) => DescriptorType::Directory,
+        };
+        Ok(ty)
     }
 
     async fn set_size(&mut self, _fd: Resource<Descriptor>, _size: Filesize) -> FsResult<()> {
-        Err(ErrorCode::ReadOnly.into())
+        todo!()
     }
 
     async fn set_times(
@@ -400,7 +289,8 @@ impl filesystem::types::HostDescriptor for WasiState {
         _data_access_timestamp: NewTimestamp,
         _data_modification_timestamp: NewTimestamp,
     ) -> FsResult<()> {
-        Err(ErrorCode::ReadOnly.into())
+        // TODO: Maybe we just ignore it?
+        Err(ErrorCode::NotPermitted.into())
     }
 
     async fn read(
@@ -410,7 +300,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         offset: Filesize,
     ) -> FsResult<(Vec<u8>, bool)> {
         let descriptor = self.resource_table.get_mut_gitfs_descriptor(&fd).unwrap();
-        let blob = self.gitfs.read_blob(descriptor.id)?;
+        let blob = self.gitfs.read_file(descriptor.inode)?;
         // TODO: Handle usize properly.
         let length = length as usize;
         let offset = offset as usize;
@@ -430,7 +320,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         _buffer: Vec<u8>,
         _offset: Filesize,
     ) -> FsResult<Filesize> {
-        Err(ErrorCode::ReadOnly.into())
+        todo!()
     }
 
     async fn read_directory(
@@ -470,7 +360,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         _fd: Resource<Descriptor>,
         _path: String,
     ) -> FsResult<()> {
-        Err(ErrorCode::ReadOnly.into())
+        todo!()
     }
 
     async fn stat(&mut self, fd: Resource<Descriptor>) -> FsResult<DescriptorStat> {
@@ -538,7 +428,8 @@ impl filesystem::types::HostDescriptor for WasiState {
         _data_access_timestamp: NewTimestamp,
         _data_modification_timestamp: NewTimestamp,
     ) -> FsResult<()> {
-        Err(ErrorCode::ReadOnly.into())
+        // TODO: Maybe just ignore it?
+        Err(ErrorCode::NotPermitted.into())
     }
 
     async fn link_at(
@@ -549,7 +440,8 @@ impl filesystem::types::HostDescriptor for WasiState {
         _new_descriptor: Resource<Descriptor>,
         _new_path: String,
     ) -> FsResult<()> {
-        Err(ErrorCode::ReadOnly.into())
+        // hard link.
+        todo!()
     }
 
     // Open the relative path `path`, relative to the directory `fd`. Unlike
@@ -614,7 +506,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         _fd: Resource<Descriptor>,
         _path: String,
     ) -> FsResult<()> {
-        Err(ErrorCode::ReadOnly.into())
+        todo!()
     }
 
     async fn rename_at(
@@ -624,7 +516,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         _new_descriptor: Resource<Descriptor>,
         _new_path: String,
     ) -> FsResult<()> {
-        Err(ErrorCode::ReadOnly.into())
+        todo!()
     }
 
     async fn symlink_at(
@@ -633,11 +525,11 @@ impl filesystem::types::HostDescriptor for WasiState {
         _old_path: String,
         _new_path: String,
     ) -> FsResult<()> {
-        Err(ErrorCode::ReadOnly.into())
+        todo!()
     }
 
     async fn unlink_file_at(&mut self, _fd: Resource<Descriptor>, _path: String) -> FsResult<()> {
-        Err(ErrorCode::ReadOnly.into())
+        todo!()
     }
 
     async fn is_same_object(
@@ -653,10 +545,11 @@ impl filesystem::types::HostDescriptor for WasiState {
     async fn metadata_hash(&mut self, fd: Resource<Descriptor>) -> FsResult<MetadataHashValue> {
         // Kind of unclear what the use case for this is if you ask me.
         // While this is read-only we can just return the object ID which is long enough.
+        todo!();
         let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
         Ok(MetadataHashValue {
-            lower: u64::from_le_bytes(descriptor.id.as_bytes()[0..8].try_into().unwrap()),
-            upper: u64::from_le_bytes(descriptor.id.as_bytes()[8..16].try_into().unwrap()),
+            lower: u64::from_le_bytes(descriptor.inode.as_bytes()[0..8].try_into().unwrap()),
+            upper: u64::from_le_bytes(descriptor.inode.as_bytes()[8..16].try_into().unwrap()),
         })
     }
 
@@ -668,10 +561,11 @@ impl filesystem::types::HostDescriptor for WasiState {
     ) -> FsResult<MetadataHashValue> {
         // Kind of unclear what the use case for this is if you ask me.
         // While this is read-only we can just return the object ID which is long enough.
+        todo!();
         let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
         Ok(MetadataHashValue {
-            lower: u64::from_le_bytes(descriptor.id.as_bytes()[0..8].try_into().unwrap()),
-            upper: u64::from_le_bytes(descriptor.id.as_bytes()[8..16].try_into().unwrap()),
+            lower: u64::from_le_bytes(descriptor.inode.as_bytes()[0..8].try_into().unwrap()),
+            upper: u64::from_le_bytes(descriptor.inode.as_bytes()[8..16].try_into().unwrap()),
         })
     }
 

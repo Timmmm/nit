@@ -21,10 +21,7 @@ use crate::{
     git::FileInfo,
     metadata::{ArgBlock, read_metadata},
     wasi_cache,
-    wasi_gitfs::{
-        self,
-        wasi_state::{GitFs, WasiState},
-    },
+    wasi_gitfs::{self, gitfs::GitFs, wasi_state::WasiState},
 };
 
 pub fn get_cache_dir() -> Option<PathBuf> {
@@ -231,12 +228,7 @@ async fn run_linter_command(
     let state = WasiState {
         wasi_ctx: wasi,
         resource_table: ResourceTable::new(),
-        gitfs: GitFs {
-            repo,
-            tree,
-            blob_contents: Default::default(),
-            parent: Default::default(),
-        },
+        gitfs: GitFs::new(repo, tree),
     };
 
     let mut store = Store::new(&engine, state);
@@ -248,7 +240,7 @@ async fn run_linter_command(
     let run_result = command.wasi_cli_run().call_run(&mut store).await;
 
     // Get the modified files.
-    let modified_files: BTreeMap<PathBuf, (Vec<u8>, Vec<u8>)> = todo!();
+    let modifications = state.gitfs.modifications();
 
     // The return type here is very weird. See
     // https://github.com/bytecodealliance/wasmtime/issues/10767
