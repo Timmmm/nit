@@ -23,10 +23,11 @@ pub struct FileNode {
     git_content: Option<ObjectId>,
     /// Current content of the file. Filled in when the file is opened.
     content: Option<Vec<u8>>,
-    /// Number of directory entries and file descriptors pointing to this file?
-    link_count: u64,
-    /// Parent directory; needed so we can reconstruct full paths.
-    parent: Inode,
+    /// Number of file descriptors pointing to this file.
+    open_count: u64,
+    /// Parent director(ies); needed so we can reconstruct full paths.
+    /// There may be none for an unlinked file.
+    parents: Vec<Inode>,
 
     /// Set to true when written to.
     modified: bool,
@@ -44,9 +45,12 @@ pub struct DirectoryNode {
     /// Current directory entries: Inode -> name. When the directory is opened
     /// we populate this and create all the file inodes.
     entries: Option<BTreeMap<Inode, String>>,
-    /// Number of directory entries and file descriptors pointing to this file?
-    link_count: u64,
+    /// Number of file descriptors pointing to this directory. When you rmdir()
+    /// a directory that is open, you can still call readdir() on it succesfully;
+    /// it will just return no entries (not even "." or "..").
+    open_count: u64,
     /// Parent directory; needed so we can reconstruct full paths.
+    /// Unlike files directories cannot be hard linked, so there is only one parent.
     /// Inode 0 is used for the root directory, which is its own parent.
     parent: Inode,
 
@@ -171,6 +175,9 @@ impl GitFs {
     /// Get modified files. Directory modifications are ignored because
     /// Git doesn't track those anyway.
     pub fn file_modifications(&self) -> BTreeMap<PathBuf, FileModifications> {
+        // Loop through all inodes, find modified/created/deleted files.
+        // Resolve their full paths. Then add them to the map. There should be max
+        // one entry for the final path that isn't deleted.
         todo!()
     }
 
@@ -205,6 +212,7 @@ impl GitFs {
         let mut symlink_follow_remaining = 40;
 
         // So we can handle the last component separately.
+        // TODO: What does that comment mean ^ ? Do we handle the last component differently?
         for component in relative_path.split('/') {
             match self.fs.nodes.get(inode).ok_or(ErrorCode::BadDescriptor)? {
                 Node::Directory(dir_node) => {
@@ -228,13 +236,13 @@ impl GitFs {
                             };
                             inode = *entries
                                 .iter()
-                                .find(|k, v| v == child_dir)
+                                .find(|(_, v)| *v == child_dir)
                                 .ok_or(ErrorCode::NoEntry)?
                                 .0;
                         }
                     }
                 }
-                Node::File(file_node) => {
+                Node::File(_) => {
                     // Can't get a child of a file.
                     return Err(ErrorCode::NotDirectory.into());
                 }
@@ -248,22 +256,28 @@ impl GitFs {
     }
 
     pub fn read_file(&mut self, inode: Inode) -> FsResult<&[u8]> {
-        // TODO: AI generated; review.
-        todo!()
-        // match &mut self.fs.nodes.get_mut(inode).ok_or(ErrorCode::InvalidInput)? {
-        //     Node::File(file_node) => {
-        //         if let Some(content) = &file_node.content {
-        //             Ok(content)
-        //         } else if let Some(git_content_id) = file_node.git_content {
-        //             let blob_data = self.read_blob(git_content_id)?;
-        //             file_node.content = Some(blob_data.to_vec());
-        //             Ok(file_node.content.as_ref().unwrap())
-        //         } else {
-        //             Err(ErrorCode::NoEntry.into())
-        //         }
-        //     }
-        //     Node::Directory(_) => Err(ErrorCode::IsDirectory.into()),
-        // }
+        match &mut self
+            .fs
+            .nodes
+            .get_mut(inode)
+            .ok_or(ErrorCode::BadDescriptor)?
+        {
+            Node::File(file_node) => {
+                if let Some(content) = &file_node.content {
+                    Ok(content)
+                } else if let Some(blob_id) = file_node.git_content {
+                    let mut blob = self
+                        .repo
+                        .find_blob(blob_id)
+                        .map_err(|_| ErrorCode::NoEntry)?;
+                    file_node.content = Some(blob.take_data());
+                    Ok(file_node.content.as_ref().unwrap())
+                } else {
+                    Err(ErrorCode::NoEntry.into())
+                }
+            }
+            Node::Directory(_) => Err(ErrorCode::IsDirectory.into()),
+        }
     }
 
     // // Read a full blob (the only API Gix gives because it may be compressed

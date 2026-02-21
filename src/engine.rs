@@ -53,10 +53,13 @@ pub fn get_url_linter_path(cache_dir: &Path, url: &str) -> PathBuf {
 }
 
 pub struct LintResult {
+    // Whether the linter returned exit code 0.
     pub success: bool,
-    // Contents before and after modification.
+    // File modifications. The key is a path to the file, the value is
+    // a before/after tuple with None indicating that the file doesn't exist.
+    // We don't care about directories because Git doesn't track them.
     // TODO: This isn't very efficient.
-    pub modified_files: BTreeMap<PathBuf, (Vec<u8>, Vec<u8>)>,
+    pub modifications: BTreeMap<PathBuf, (Option<Vec<u8>>, Option<Vec<u8>>)>,
 }
 
 /// Run a single linter and return whether all executions returned EXIT_SUCCESS,
@@ -253,7 +256,7 @@ async fn run_linter_command(
                     info!("Call failed with exit code {:?}", exit.0);
                     return Ok(LintResult {
                         success: false,
-                        modified_files,
+                        modifications,
                     });
                 }
             } else {
@@ -266,6 +269,6 @@ async fn run_linter_command(
 
     Ok(LintResult {
         success: true,
-        modified_files,
+        modifications,
     })
 }
