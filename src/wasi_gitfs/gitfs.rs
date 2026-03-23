@@ -44,6 +44,7 @@ pub struct DirectoryNode {
     git_content: Option<ObjectId>,
     /// Current directory entries: Inode -> name. When the directory is opened
     /// we populate this and create all the file inodes.
+    /// When it is rmdir'd all entries are removed.
     entries: Option<BTreeMap<Inode, String>>,
     /// Number of file descriptors pointing to this directory. When you rmdir()
     /// a directory that is open, you can still call readdir() on it succesfully;
@@ -51,7 +52,7 @@ pub struct DirectoryNode {
     open_count: u64,
     /// Parent directory; needed so we can reconstruct full paths.
     /// Unlike files directories cannot be hard linked, so there is only one parent.
-    /// Inode 0 is used for the root directory, which is its own parent.
+    /// The root directory's parent is itself.
     parent: Inode,
 
     /// Set to true when written to (files created/renamed/deleted).
