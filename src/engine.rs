@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use futures::{StreamExt as _, stream};
 use log::{debug, info};
 use std::{
@@ -10,11 +10,9 @@ use wasmtime::{
     Engine, Store,
     component::{Component, Linker},
 };
-use wasmtime_wasi::{DirPerms, FilePerms, I32Exit, ResourceTable};
+use wasmtime_wasi::{DirPerms, FilePerms, I32Exit, ResourceTable, WasiCtx, WasiCtxView, WasiView};
 
-use wasmtime_wasi::p2::{
-    IoView, WasiCtx, WasiCtxBuilder, WasiView, bindings::Command, pipe::MemoryOutputPipe,
-};
+use wasmtime_wasi::p2::{bindings::Command, pipe::MemoryOutputPipe};
 
 use crate::{
     config::{ConfigLinter, LinterLocation},
@@ -58,14 +56,11 @@ struct ComponentRunStates {
 }
 
 impl WasiView for ComponentRunStates {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi_ctx
-    }
-}
-
-impl IoView for ComponentRunStates {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.resource_table
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi_ctx,
+            table: &mut self.resource_table,
+        }
     }
 }
 
@@ -122,8 +117,7 @@ pub async fn run_single_linter(
 
     info!("Loading component");
 
-    let engine =
-        Engine::new(wasmtime::Config::new().async_support(true)).context("creating WASM engine")?;
+    let engine = Engine::new(&wasmtime::Config::new())?;
 
     let component = wasi_cache::load_component_cached(&engine, &linter_path).await?;
 
@@ -195,7 +189,7 @@ async fn run_linter_command(
     let stdout = MemoryOutputPipe::new(10 * 1024 * 1024);
     let stderr = MemoryOutputPipe::new(10 * 1024 * 1024);
 
-    let wasi = WasiCtxBuilder::new()
+    let wasi = WasiCtx::builder()
         .allow_tcp(false)
         .allow_udp(false)
         .allow_ip_name_lookup(false)
@@ -238,7 +232,7 @@ async fn run_linter_command(
                     return Ok(false);
                 }
             } else {
-                return Err(error);
+                return Err(error.into());
             }
         }
     };

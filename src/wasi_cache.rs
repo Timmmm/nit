@@ -24,9 +24,7 @@ pub async fn load_component_cached(engine: &Engine, wasi_path: &Path) -> Result<
     let cache_path = wasi_path.with_file_name(filename);
 
     if !cache_path.exists() {
-        let compiled = engine
-            .precompile_component(&wasi)
-            .context("precompiling WASI module")?;
+        let compiled = engine.precompile_component(&wasi)?;
 
         let tmpfile = wasi_path.with_file_name(unique_filename("tmp-", ".cache"));
         fs::write(&tmpfile, compiled).await?;
@@ -42,5 +40,6 @@ pub async fn load_component_cached(engine: &Engine, wasi_path: &Path) -> Result<
     // where we might end up overwriting it, but it should be with an atomic
     // rename and the contents should remain the same (assuming WASM compilation
     // is deterministic).
-    unsafe { Component::deserialize_file(&engine, cache_path) }
+    let result = unsafe { Component::deserialize_file(&engine, cache_path) };
+    Ok(result?)
 }
