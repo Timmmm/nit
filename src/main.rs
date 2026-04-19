@@ -339,13 +339,15 @@ async fn run(
         eprintln!("Running linter: {}", linter.name.blue());
         let result = run_single_linter(&files, &cache_dir, &top_level, linter, tree).await?;
 
-        if !result.success || !result.modified_files.is_empty() {
+        let modifications = resolve_potential_modifications(...);
+
+        if !result.success || !modifications.is_empty() {
             failed = true;
             eprintln!("Linter {}", "failed".red());
             if fix_files {
                 // Write modified files if they were unchanged from the version in the tree.
                 for (path, (original_contents, modified_contents)) in
-                    result.modified_files.into_iter()
+                    modifications.into_iter()
                 {
                     let current_contents = fs::read(&path).await?;
                     if current_contents == original_contents {

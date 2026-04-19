@@ -55,11 +55,10 @@ pub fn get_url_linter_path(cache_dir: &Path, url: &str) -> PathBuf {
 pub struct LintResult {
     // Whether the linter returned exit code 0.
     pub success: bool,
-    // File modifications. The key is a path to the file, the value is
-    // a before/after tuple with None indicating that the file doesn't exist.
-    // We don't care about directories because Git doesn't track them.
-    // TODO: This isn't very efficient.
-    pub modifications: BTreeMap<PathBuf, (Option<Vec<u8>>, Option<Vec<u8>>)>,
+    // *Potentially* modified files/directories. Each file or directory here
+    // *may* have been modified. We need to compare against the Git tree to
+    // know for sure.
+    pub potential_modifications: BTreeSet<PathBuf>,
 }
 
 /// Run a single linter and return whether all executions returned EXIT_SUCCESS,
@@ -243,7 +242,7 @@ async fn run_linter_command(
     let run_result = command.wasi_cli_run().call_run(&mut store).await;
 
     // Get the modified files.
-    let modifications = state.gitfs.modifications();
+    let potential_modifications = state.gitfs.potential_modifications();
 
     // The return type here is very weird. See
     // https://github.com/bytecodealliance/wasmtime/issues/10767
@@ -256,7 +255,7 @@ async fn run_linter_command(
                     info!("Call failed with exit code {:?}", exit.0);
                     return Ok(LintResult {
                         success: false,
-                        modifications,
+                        potential_modifications,
                     });
                 }
             } else {
@@ -269,6 +268,6 @@ async fn run_linter_command(
 
     Ok(LintResult {
         success: true,
-        modifications,
+        potential_modifications,
     })
 }

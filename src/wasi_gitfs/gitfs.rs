@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::PathBuf,
 };
 
@@ -84,7 +84,7 @@ impl FileSystem {
         nodes.insert(Node::Directory(DirectoryNode {
             git_content: Some(root),
             entries: None,
-            link_count: 1,
+            open_count: 1,
             parent: ROOT_INODE,
             modified: false,
         }));
@@ -155,15 +155,6 @@ pub struct GitFs {
     fs: FileSystem,
 }
 
-pub enum FileModifications {
-    /// New file with the given content.
-    Created(Vec<u8>),
-    /// File modified to have the given content.
-    Modified(Vec<u8>),
-    /// File deleted.
-    Deleted,
-}
-
 impl GitFs {
     // Create a new GitFs instance.
     pub fn new(repo: Repository, tree: ObjectId) -> Self {
@@ -173,12 +164,18 @@ impl GitFs {
         }
     }
 
-    /// Get modified files. Directory modifications are ignored because
-    /// Git doesn't track those anyway.
-    pub fn file_modifications(&self) -> BTreeMap<PathBuf, FileModifications> {
-        // Loop through all inodes, find modified/created/deleted files.
-        // Resolve their full paths. Then add them to the map. There should be max
-        // one entry for the final path that isn't deleted.
+    // TODO: Better idea: We'll fully support all file operations, but keep
+    // track of filenames and directories that *might* have been modified.
+    // Afterwards we'll compare all the files and directories (and all contents
+    // of the directories) with the original commit and find differences
+    // that way. Probably not the most efficient but a lot simpler.
+
+    /// Get potentially modified files and directories. This is basically any
+    /// file/directory that has been created, moved, deleted or written to.
+    /// It's potential modifications because if a file is rewritten with its
+    /// original contents then we don't consider that to be a modification.
+    pub fn potential_modifications(&self) -> BTreeSet<PathBuf> {
+
         todo!()
     }
 
