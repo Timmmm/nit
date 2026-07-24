@@ -282,8 +282,18 @@ async fn run_linter_command(
     // The return type here is very weird. See
     // https://github.com/bytecodealliance/wasmtime/issues/10767
     match run_result {
-        Ok(res) => res.map_err(|_| anyhow!("Unknown error running linter"))?,
+        // `return EXIT_SUCCESS` from `main()`.
+        Ok(Ok(())) => {}
+        // `return EXIT_FAILURE` from `main()` (or some other non-zero exit code).
+        Ok(Err(())) => {
+            info!("Call failed with a non-zero exit code");
+            return Ok(LintResult {
+                success: false,
+                modifications,
+            });
+        }
         Err(error) => {
+            // exit() was called.
             if let Some(exit) = error.downcast_ref::<I32Exit>() {
                 // Err(I32Exit(0)) is actually success.
                 if exit.0 != 0 {
