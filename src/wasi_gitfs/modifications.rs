@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct FileContentsAndMetadata {
     pub contents: Vec<u8>,
     pub executable: bool,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum FileState {
     NonExistent,
     Exists(FileContentsAndMetadata),
