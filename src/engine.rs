@@ -251,6 +251,10 @@ async fn run_linter_command(
     let stdout = MemoryOutputPipe::new(10 * 1024 * 1024);
     let stderr = MemoryOutputPipe::new(10 * 1024 * 1024);
 
+    // Shallow clone (it's an arc mutex underneath), stdout/err so we can access it later.
+    let stdout_clone = stdout.clone();
+    let stderr_clone = stderr.clone();
+
     let wasi = WasiCtx::builder()
         .allow_tcp(false)
         .allow_udp(false)
@@ -265,7 +269,6 @@ async fn run_linter_command(
         wasi_ctx: wasi,
         resource_table: ResourceTable::new(),
         gitfs: GitFs::new(repo, tree),
-        maybe_changed: Default::default(),
     };
 
     let mut store = Store::new(&engine, state);
@@ -277,7 +280,17 @@ async fn run_linter_command(
     let run_result = command.wasi_cli_run().call_run(&mut store).await;
 
     // Get the modified files.
-    let modifications = store.data().gitfs.modifications();
+    let modifications = store.data_mut().gitfs.modifications();
+
+    // Print stdout/err. TODO: Only do this if they fail.
+    debug!(
+        "Linter stdout: {}",
+        String::from_utf8_lossy(&stdout_clone.contents())
+    );
+    debug!(
+        "Linter stderr: {}",
+        String::from_utf8_lossy(&stderr_clone.contents())
+    );
 
     // The return type here is very weird. See
     // https://github.com/bytecodealliance/wasmtime/issues/10767
