@@ -355,10 +355,23 @@ async fn run(
                     // having separate fields for metadata and content changes.
 
                     let on_disk = match fs::read(&path).await {
-                        // TODO (1.0): Metadata. `executable` should be loaded from disk and applied below.
                         Ok(contents) => FileState::Exists(FileContentsAndMetadata {
                             contents,
-                            executable: false,
+                            // For Windows we don't currently fix executableness.
+                            executable:
+                                if cfg!(unix) {
+                                    use std::os::unix::fs::PermissionsExt;
+                                    // Git only looks at the owner execute bit.
+                                    // See https://github.com/git/git/blob/9a0c4701dcd5725c4184599322b52933ff5005ca/object.h#L133
+                                    fs::metadata(&path).await?.permissions().mode() & 0o100 != 0
+                                } else {
+                                    match &modification.original {
+                                        // This doesn't matter because we don't fix this bit on Windows currently.
+                                        FileState::NonExistent => false,
+                                        // Copy the existing bit value so it won't cause a mismatch.
+                                        FileState::Exists(file_contents_and_metadata) => file_contents_and_metadata.executable,
+                                    }
+                                },
                         }),
                         Err(e) if e.kind() == NotFound => FileState::NonExistent,
                         Err(e) => bail!("Failed to read file: {}", e),
@@ -385,6 +398,20 @@ async fn run(
                                 "File {} was created/modified by the linter; changes written.",
                                 path.display()
                             );
+                            if cfg!(unix) {
+                                // Set user execute bit appropriately.
+                                use std::os::unix::fs::PermissionsExt;
+                                let mut permissions = fs::metadata(&path).await?.permissions();
+                                // Clear user execute bit.
+                                let mut mode = permissions.mode() & !0o100;
+                                if modified.executable {
+                                    mode |= 0o100;
+                                }
+                                permissions.set_mode(mode);
+                            } else {
+                                // TODO (2.0): Fix executableness on Windows too?
+                                // This will require touching the Git index.
+                            }
                         }
                         FileState::NonExistent => {
                             fs::remove_file(&path).await?;
