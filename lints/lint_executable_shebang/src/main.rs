@@ -18,13 +18,13 @@ fn main() -> io::Result<ExitCode> {
 }
 
 // TODO: We can auto-fix this too by marking it executable.
-// Maybe we need to provide a Git interface. Or we could just make the
-// linter link with gitoxide.
 fn file_needs_to_be_executable(path: &Path) -> io::Result<bool> {
     let metadata = std::fs::metadata(path)?;
     let permissions = metadata.permissions();
     // TODO: We actually need to use Git to check for executable permissions
     // anyway since they don't exist on Windows.
+    // It would be great if we could expose the Git executable flag through
+    // the WASI VFS, but unfortunately WASI does not yet support file permissions.
     let is_executable: bool = todo!();
 
     Ok(!is_executable && {

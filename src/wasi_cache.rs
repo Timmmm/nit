@@ -15,12 +15,9 @@ pub async fn load_component_cached(engine: &Engine, wasi_path: &Path) -> Result<
     digest.update(&wasi);
     let compatibility_digest = hash_adapter::hash_digest(compatibility_hash, digest);
 
-    // TODO: Use with_added_extension() when stable.
-    let mut filename = wasi_path
-        .file_name()
-        .expect("wasi file must have filename")
-        .to_owned();
-    filename.push(format!(".{}.cache", compatibility_digest.to_hex()));
+    let filename = wasi_path
+        .with_added_extension(compatibility_digest.to_hex().as_str())
+        .with_added_extension("cache");
     let cache_path = wasi_path.with_file_name(filename);
 
     if !cache_path.exists() {

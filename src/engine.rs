@@ -1,8 +1,10 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use futures::{StreamExt as _, stream};
+use gix::{ObjectId, Repository};
+use itertools::Itertools;
 use log::{debug, info};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     env,
     path::{Path, PathBuf},
 };
@@ -20,6 +22,7 @@ use crate::{
     git::FileInfo,
     metadata::{ArgBlock, read_metadata},
     wasi_cache,
+    wasi_gitfs::{self, gitfs::GitFs, modifications::FileModifications, wasi_state::WasiState},
 };
 
 pub fn get_cache_dir() -> Option<PathBuf> {
@@ -50,28 +53,28 @@ pub fn get_url_linter_path(cache_dir: &Path, url: &str) -> PathBuf {
     cache_dir.join(hash_str)
 }
 
-struct ComponentRunStates {
-    wasi_ctx: WasiCtx,
-    resource_table: ResourceTable,
+pub struct LintResult {
+    // Whether the linter returned exit code 0.
+    pub success: bool,
+    // Set of modified files. These files had different content after the linter
+    // run compared to before it in the VFS (or they were created/deleted).
+    pub modifications: FileModifications,
 }
 
-impl WasiView for ComponentRunStates {
-    fn ctx(&mut self) -> WasiCtxView<'_> {
-        WasiCtxView {
-            ctx: &mut self.wasi_ctx,
-            table: &mut self.resource_table,
-        }
-    }
-}
-
-/// Run a single linter and return whether all executions returned EXIT_SUCCESS.
-/// This does not check git diff.
+/// Run a single linter and return whether all executions returned EXIT_SUCCESS,
+/// and the set of modified files (if any). It is possible for a linter to
+/// fail without modifying files, or to succeed with modified files (but that
+/// should still be considered failure).
+///
+/// The result is only Err() if there was actually some error in setting up
+/// the linter - reading configs, finding the binary, etc.
 pub async fn run_single_linter(
     files: &[FileInfo],
     cache_dir: &PathBuf,
     top_level: &PathBuf,
     linter: ConfigLinter,
-) -> Result<bool> {
+    tree: ObjectId,
+) -> Result<LintResult> {
     let linter_path = get_linter_path(top_level, cache_dir, &linter);
     let metadata = read_metadata(&linter_path)?;
 
@@ -121,8 +124,11 @@ pub async fn run_single_linter(
 
     let component = wasi_cache::load_component_cached(&engine, &linter_path).await?;
 
+    info!("Opening repo");
+    let repo = gix::open(top_level).context("Opening git repo")?;
+
     if metadata.max_filenames == 0 {
-        run_linter_command(top_level, &full_args, &engine, &component).await
+        run_linter_command(&full_args, &engine, &component, repo, tree).await
     } else {
         let all_filenames = files
             .iter()
@@ -144,7 +150,9 @@ pub async fn run_single_linter(
                 // and move the references in (so we don't move the actual engine/component).
                 let component = &component;
                 let engine = &engine;
-                async move { run_linter_command(top_level, &full_args, engine, component).await }
+                // TODO (2.0): Is this clone cheap? I hope so.
+                let repo = repo.clone();
+                async move { run_linter_command(&full_args, engine, component, repo, tree).await }
             });
 
         // TODO (2.0): Add an option to explicitly set the parallelism, since
@@ -164,26 +172,80 @@ pub async fn run_single_linter(
             .collect()
             .await;
 
-        for result in results.into_iter() {
-            if !result? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        merge_single_linter_parallel_results(results)
     }
 }
 
+/// Fold all of the modified files together, and AND all of the successes together.
+/// If two runs modified the same file that indicates something has seriously
+/// gone wrong with the linter, e.g. we ran
+///
+///   format foo.cpp
+///   format bar.cpp
+///
+/// And they both modified foo.cpp.
+///
+/// In that case we just return Err(), because it indicates the linter is mad.
+///
+fn merge_single_linter_parallel_results(results: Vec<Result<LintResult>>) -> Result<LintResult> {
+    let (overall_result, overall_expected_modifications) = results.into_iter().fold_ok(
+        (
+            LintResult {
+                success: true,
+                modifications: BTreeMap::new(),
+            },
+            0,
+        ),
+        |(overall_result, overall_expected_modifications), extra_result| {
+            let overall_expected_modifications =
+                overall_expected_modifications + extra_result.modifications.len();
+
+            let mut modifications = overall_result.modifications;
+            // This overwrites duplicates, so check the length afterwards to ensure there weren't any.
+            modifications.extend(extra_result.modifications.into_iter());
+
+            (
+                LintResult {
+                    success: overall_result.success && extra_result.success,
+                    modifications,
+                },
+                overall_expected_modifications,
+            )
+        },
+    )?;
+
+    if overall_result.modifications.len() != overall_expected_modifications {
+        // TODO (2.0): Better error message - which linter, which file?
+        bail!(
+            "When running the linter in parallel, the same file was modified by two or more different instances of the linter. This indicates a badly behaved linter."
+        );
+    }
+
+    Ok(overall_result)
+}
+
 async fn run_linter_command(
-    top_level: &Path,
     args: &[&str],
     engine: &Engine,
     component: &Component,
-) -> Result<bool> {
+    // Could use a reference here but it isn't Sync so that would complicate threading.
+    repo: Repository,
+    tree: ObjectId,
+) -> Result<LintResult> {
     debug!("Running linter with args: {:?}", args);
 
     let mut linker = Linker::new(&engine);
 
-    wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+    // Normally we would do
+    //
+    //   wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+    //
+    // But that adds the filesystem API too and we want to use our own one. So
+    // instead we copy & paste it, removing the filesystem API ...
+    wasi_gitfs::wasi_linker_excluding_filesystem::add_to_linker_async(&mut linker)?;
+
+    // ... and then add our custom one instead.
+    wasi_gitfs::wasi_state::add_to_linker_async(&mut linker)?;
 
     // Allow up to 10 MB of output.
     let stdout = MemoryOutputPipe::new(10 * 1024 * 1024);
@@ -193,22 +255,17 @@ async fn run_linter_command(
         .allow_tcp(false)
         .allow_udp(false)
         .allow_ip_name_lookup(false)
-        .preopened_dir(
-            top_level,
-            // TODO (2.0): Use `top_level` so reported paths are correct.
-            ".",
-            DirPerms::all(),
-            FilePerms::all(),
-        )?
         .stdout(stdout)
         .stderr(stderr)
         .args(args)
         // TODO (1.0): Set cwd: https://github.com/bytecodealliance/wasmtime/pull/9831
         .build();
 
-    let state = ComponentRunStates {
+    let state = WasiState {
         wasi_ctx: wasi,
         resource_table: ResourceTable::new(),
+        gitfs: GitFs::new(repo, tree),
+        maybe_changed: Default::default(),
     };
 
     let mut store = Store::new(&engine, state);
@@ -217,8 +274,10 @@ async fn run_linter_command(
     let command = Command::instantiate_async(&mut store, &component, &linker).await?;
 
     info!("Starting call");
-
     let run_result = command.wasi_cli_run().call_run(&mut store).await;
+
+    // Get the modified files.
+    let modifications = store.data().gitfs.modifications();
 
     // The return type here is very weird. See
     // https://github.com/bytecodealliance/wasmtime/issues/10767
@@ -229,7 +288,10 @@ async fn run_linter_command(
                 // Err(I32Exit(0)) is actually success.
                 if exit.0 != 0 {
                     info!("Call failed with exit code {:?}", exit.0);
-                    return Ok(false);
+                    return Ok(LintResult {
+                        success: false,
+                        modifications,
+                    });
                 }
             } else {
                 return Err(error.into());
@@ -239,6 +301,8 @@ async fn run_linter_command(
 
     info!("Call finished");
 
-    // TODO (2.0): Use WASI to check if files were modified.
-    Ok(true)
+    Ok(LintResult {
+        success: true,
+        modifications,
+    })
 }

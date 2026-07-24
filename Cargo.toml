@@ -17,18 +17,21 @@ lto = true
 codegen-units = 1
 
 [dependencies]
+async-trait = "0.1.91" # Must match the version used by wasmtime-wasi.
 anyhow = { version = "1.0.104", features = ["backtrace"] }
 blake3 = "1.8.5"
+bytes = "1.12.1" # Must match the version used by wasmtime-wasi.
 clap = { version = "4.6.4", features = ["derive"] }
 derive_more = { version = "2.1.1", features = ["display"] }
 dirs = "6.0.0"
 env_logger = "0.11.11"
-futures = "0.3.32"
+futures = "0.3.33"
+gix = "0.86.0"
 glob = "0.3.4"
 indicatif = { version = "0.18.6", features = ["tokio"] }
 itertools = "0.15.0"
 log = "0.4.33"
-memchr = "2.8.1"
+memchr = "2.8.3"
 owo-colors = { version = "4.3.0", features = ["supports-color"] }
 regex = "1.13.1"
 reqwest = { version = "0.13.4", features = ["stream"] }
@@ -40,6 +43,8 @@ tokio-util = { version = "0.7.19", features = ["io",] }
 walkdir = "2.5.0"
 wasmtime = "47.0.2"
 wasmtime-wasi = "47.0.2"
+wasmtime-wasi-io = "47.0.2"
+slab = "0.4.12"
 
 # OpenSSL is only used on Unix. We don't want to add it as a dependency on Windows.
 [target.'cfg(unix)'.dependencies]
@@ -60,3 +65,9 @@ members = [
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# Temporary to get the latest version of Wasmtime.
+# [patch.crates-io]
+# wasmtime = { git = "https://github.com/bytecodealliance/wasmtime" }
+# wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime" }
+# wasmtime-wasi-io = { git = "https://github.com/bytecodealliance/wasmtime" }
