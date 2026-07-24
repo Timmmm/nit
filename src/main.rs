@@ -374,9 +374,15 @@ async fn run(
 
                     match modification.modified {
                         FileState::Exists(modified) => {
+                            // Create directory if it doesn't exist.
+                            if let Some(parent) = path.parent()
+                                && !parent.as_os_str().is_empty()
+                            {
+                                fs::create_dir_all(parent).await?;
+                            }
                             fs::write(&path, modified.contents).await?;
                             eprintln!(
-                                "File {} was modified by the linter; changes written.",
+                                "File {} was created/modified by the linter; changes written.",
                                 path.display()
                             );
                         }
