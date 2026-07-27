@@ -70,6 +70,10 @@ pub enum Node {
 /// We read the entire file into memory when it is read or written for
 /// the first time.
 struct FileSystem {
+    /// Root tree object this filesystem was created from. Not needed by FileSystem
+    /// itself but useful for callers.
+    root: ObjectId,
+
     /// Discovered file & directories, indexed by Inode.
     /// Inode 0 is always the root directory.
     nodes: Slab<Node>,
@@ -88,7 +92,11 @@ impl FileSystem {
             open_count: 1,
             parent: ROOT_INODE,
         }));
-        Self { nodes }
+        Self { root, nodes }
+    }
+
+    fn root(&self) -> ObjectId {
+        self.root
     }
 }
 
