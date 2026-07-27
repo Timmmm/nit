@@ -1,13 +1,13 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use gix::{ObjectId, Repository};
 use slab::Slab;
 use wasmtime_wasi::p2::{FsResult, bindings::filesystem::types::ErrorCode};
 
-use crate::wasi_gitfs::modifications::FileModifications;
+use crate::wasi_gitfs::modifications::{FileMode, FileModification, FileModifications, FileState};
 
 pub type Inode = usize;
 pub const ROOT_INODE: Inode = 0;
@@ -15,15 +15,6 @@ pub const ROOT_INODE: Inode = 0;
 pub enum ObjectIdOrContent<T> {
     ObjectId(ObjectId),
     Content(T),
-}
-
-/// The type of a file. Git only supports these three modes for blobs.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum FileMode {
-    Regular,
-    Executable,
-    /// The content of the file is the target path of the symlink.
-    Symlink,
 }
 
 /// Represents a file on disk (after it has been lazily opened).
@@ -107,7 +98,9 @@ pub struct GitFs {
     // Root directory
     fs: FileSystem,
 
-    // Set of paths that may have been modified.
+    /// Set of file paths that may have been modified. This only includes files.
+    /// When a directory is moved/created/deleted we add all of the file paths
+    /// in the original/modified directory recursively.
     maybe_changed: HashSet<PathBuf>,
 }
 
@@ -121,17 +114,34 @@ impl GitFs {
         }
     }
 
-    /// Get modified files and directories. This is basically any
-    /// file/directory that has been created, moved, deleted or written to.
+    /// Get modified files. This is basically any file that has been created,
+    /// moved, deleted or written to.
     ///
-    /// We keep track of filenames and directories that *might* have been modified.
-    /// Afterwards we compare all the files and directories (and all contents
-    /// of the directories) with the original commit and find differences
-    /// that way. Probably not the most efficient but simple.
+    /// We keep track of filenames that *might* have been modified.
+    /// Afterwards we compare all the files with the original commit and
+    /// find differences that way.
+    ///
+    /// Probably not the most efficient but simple.
     pub fn modifications(&self) -> FileModifications {
-        todo!(
-            "return a list of modified files and directories (after checking potential modifications vs the original commit)"
-        )
+        self.maybe_changed
+            .iter()
+            .filter_map(|path| {
+                let original = self.original_state(path);
+                let modified = self.modified_state(path);
+                (original != modified)
+                    .then(|| (path.clone(), FileModification { original, modified }))
+            })
+            .collect()
+    }
+
+    /// The state of `path` in the original Git tree.
+    fn original_state(&self, path: &Path) -> FileState {
+        todo!()
+    }
+
+    /// The current state of `path` in the VFS.
+    fn modified_state(&self, path: &Path) -> FileState {
+        todo!()
     }
 
     pub fn get_node(&self, inode: Inode) -> FsResult<&Node> {
