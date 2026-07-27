@@ -3,11 +3,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use gix::{ObjectId, Repository};
+use anyhow::Result;
+use gix::{ObjectId, Repository, objs::tree::EntryKind};
 use slab::Slab;
 use wasmtime_wasi::p2::{FsResult, bindings::filesystem::types::ErrorCode};
 
-use crate::wasi_gitfs::modifications::{FileMode, FileModification, FileModifications, FileState};
+use crate::wasi_gitfs::modifications::{
+    FileContentsAndMetadata, FileMode, FileModification, FileModifications,
+    FileState::{self, NonExistent},
+};
 
 pub type Inode = usize;
 pub const ROOT_INODE: Inode = 0;
@@ -126,21 +130,44 @@ impl GitFs {
         self.maybe_changed
             .iter()
             .filter_map(|path| {
-                let original = self.original_state(path);
-                let modified = self.modified_state(path);
+                // TODO: Don't unwrap.
+                let original = self.original_state(path).unwrap();
+                let modified = self.modified_state(path).unwrap();
                 (original != modified)
                     .then(|| (path.clone(), FileModification { original, modified }))
             })
             .collect()
     }
 
-    /// The state of `path` in the original Git tree.
-    fn original_state(&self, path: &Path) -> FileState {
-        todo!()
+    /// The state of `path` in the original Git tree. If it's a directory
+    /// then it is reported as NonExistant.
+    fn original_state(&self, path: &Path) -> Result<FileState> {
+        // TODO: Cache `tree` (but this hits the classic reference-to-sibling issue).
+        let tree = self.repo.find_tree(self.fs.root())?;
+
+        let entry = match tree.lookup_entry_by_path(path)? {
+            Some(entry) => entry,
+            None => return Ok(FileState::NonExistent),
+        };
+
+        let mode = match entry.mode().kind() {
+            EntryKind::Blob => FileMode::Regular,
+            EntryKind::BlobExecutable => FileMode::Executable,
+            EntryKind::Link => FileMode::Symlink,
+            // Directories don't exist as far as Git knows.
+            EntryKind::Tree | EntryKind::Commit => return Ok(FileState::NonExistent),
+        };
+
+        let mut blob = self.repo.find_blob(entry.object_id())?;
+
+        Ok(FileState::Exists(FileContentsAndMetadata {
+            contents: blob.take_data(),
+            mode,
+        }))
     }
 
     /// The current state of `path` in the VFS.
-    fn modified_state(&self, path: &Path) -> FileState {
+    fn modified_state(&self, path: &Path) -> Result<FileState> {
         todo!()
     }
 
