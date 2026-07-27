@@ -105,7 +105,10 @@ pub struct GitFs {
     /// Set of file paths that may have been modified. This only includes files.
     /// When a directory is moved/created/deleted we add all of the file paths
     /// in the original/modified directory recursively.
-    maybe_changed: HashSet<PathBuf>,
+    ///
+    /// Note that WASI requires paths to be representable in UTF-8 which is
+    /// why we use String and not Vec<u8> or PathBuf.
+    maybe_changed: HashSet<String>,
 }
 
 impl GitFs {
@@ -141,7 +144,7 @@ impl GitFs {
 
     /// The state of `path` in the original Git tree. If it's a directory
     /// then it is reported as NonExistant.
-    fn original_state(&self, path: &Path) -> Result<FileState> {
+    fn original_state(&self, path: &str) -> Result<FileState> {
         // TODO: Cache `tree` (but this hits the classic reference-to-sibling issue).
         let tree = self.repo.find_tree(self.fs.root())?;
 
@@ -166,9 +169,31 @@ impl GitFs {
         }))
     }
 
-    /// The current state of `path` in the VFS.
-    fn modified_state(&self, path: &Path) -> Result<FileState> {
-        todo!()
+    /// The current state of `path` in the VFS. If it's a directory
+    /// then it is reported as NonExistant.
+    fn modified_state(&self, path: &str) -> Result<FileState> {
+        // TODO: We need a detectable error for non-existence; it shouldn't be returns as an Err() here.
+        let inode = self.resolve_path(ROOT_INODE, path, false)?;
+
+        let mode = match self.fs.nodes[inode] {
+            Node::File(file) => file.mode,
+            Node::Directory(_) => return Ok(FileState::NonExistent),
+        };
+
+        // TODO: Read inode file content.
+        // let content = match self.content(inode) {
+        //     Ok(content) => content,
+        //     Err(_) => {
+        //         warn!("Couldn't read {}; ignoring it.", path.display());
+        //         return None;
+        //     }
+        // };
+        // let contents = content.lock().expect("content mutex poisoned").clone();
+
+        Ok(FileState::Exists(FileContentsAndMetadata {
+            contents: todo!(),
+            mode,
+        }))
     }
 
     pub fn get_node(&self, inode: Inode) -> FsResult<&Node> {

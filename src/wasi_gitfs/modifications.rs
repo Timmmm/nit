@@ -17,6 +17,9 @@ pub struct FileContentsAndMetadata {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum FileState {
+    /// Note that since Git doesn't track directories, directories will be
+    /// reported as NonExistent.
+    // TODO: Maybe rename this to `NotFile`.
     NonExistent,
     Exists(FileContentsAndMetadata),
 }
@@ -26,4 +29,5 @@ pub struct FileModification {
     pub modified: FileState,
 }
 
-pub type FileModifications = BTreeMap<PathBuf, FileModification>;
+/// Map from file path to the modification.
+pub type FileModifications = BTreeMap<String, FileModification>;
