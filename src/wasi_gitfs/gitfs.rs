@@ -17,11 +17,23 @@ pub enum ObjectIdOrContent<T> {
     Content(T),
 }
 
+/// The type of a file. Git only supports these three modes for blobs.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum FileMode {
+    Regular,
+    Executable,
+    /// The content of the file is the target path of the symlink.
+    Symlink,
+}
+
 /// Represents a file on disk (after it has been lazily opened).
 /// Equivalent to an inode.
 pub struct FileNode {
     /// Current content of the file. Filled in when the file is opened.
     content: ObjectIdOrContent<Vec<u8>>,
+    /// Mode of the file. This can be changed in some cases (e.g. marking the
+    /// file as executable).
+    mode: FileMode,
     /// Number of file descriptors pointing to this file.
     open_count: u64,
     /// Parent director(ies); needed so we can reconstruct full paths.
@@ -97,6 +109,7 @@ impl GitFs {
         Self {
             repo,
             fs: FileSystem::new(tree),
+            maybe_changed: Default::default(),
         }
     }
 
