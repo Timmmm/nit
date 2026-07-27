@@ -25,9 +25,6 @@ pub struct WasiState {
     pub resource_table: ResourceTable,
     // The git filesystem. This is a *mutable* filesystem backed by a Git repository.
     pub gitfs: GitFs,
-    // Set of paths that may have changed.
-    // TODO: This doesn't need to be pub; we should make a proper fn new() -> Self.
-    pub maybe_changed: HashSet<PathBuf>,
 }
 
 impl WasiView for WasiState {

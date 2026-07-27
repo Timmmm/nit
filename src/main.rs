@@ -358,20 +358,21 @@ async fn run(
                         Ok(contents) => FileState::Exists(FileContentsAndMetadata {
                             contents,
                             // For Windows we don't currently fix executableness.
-                            executable:
-                                if cfg!(unix) {
-                                    use std::os::unix::fs::PermissionsExt;
-                                    // Git only looks at the owner execute bit.
-                                    // See https://github.com/git/git/blob/9a0c4701dcd5725c4184599322b52933ff5005ca/object.h#L133
-                                    fs::metadata(&path).await?.permissions().mode() & 0o100 != 0
-                                } else {
-                                    match &modification.original {
-                                        // This doesn't matter because we don't fix this bit on Windows currently.
-                                        FileState::NonExistent => false,
-                                        // Copy the existing bit value so it won't cause a mismatch.
-                                        FileState::Exists(file_contents_and_metadata) => file_contents_and_metadata.executable,
+                            executable: if cfg!(unix) {
+                                use std::os::unix::fs::PermissionsExt;
+                                // Git only looks at the owner execute bit.
+                                // See https://github.com/git/git/blob/9a0c4701dcd5725c4184599322b52933ff5005ca/object.h#L133
+                                fs::metadata(&path).await?.permissions().mode() & 0o100 != 0
+                            } else {
+                                match &modification.original {
+                                    // This doesn't matter because we don't fix this bit on Windows currently.
+                                    FileState::NonExistent => false,
+                                    // Copy the existing bit value so it won't cause a mismatch.
+                                    FileState::Exists(file_contents_and_metadata) => {
+                                        file_contents_and_metadata.executable
                                     }
-                                },
+                                }
+                            },
                         }),
                         Err(e) if e.kind() == NotFound => FileState::NonExistent,
                         Err(e) => bail!("Failed to read file: {}", e),

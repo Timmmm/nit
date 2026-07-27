@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::PathBuf,
+};
 
 use gix::{ObjectId, Repository};
 use slab::Slab;
@@ -83,6 +86,9 @@ pub struct GitFs {
 
     // Root directory
     fs: FileSystem,
+
+    // Set of paths that may have been modified.
+    maybe_changed: HashSet<PathBuf>,
 }
 
 impl GitFs {
