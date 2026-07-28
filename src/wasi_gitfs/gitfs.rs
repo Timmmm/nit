@@ -42,9 +42,9 @@ pub struct FileNode {
 /// Represents a file on disk (after it has been lazily opened).
 /// Equivalent to an inode.
 pub struct DirectoryNode {
-    /// Current directory entries: Inode -> name. When the directory is opened
+    /// Current directory entries: String -> Inode. When the directory is opened
     /// we populate this and create all the file inodes.
-    entries: ObjectIdOrContent<BTreeMap<Inode, String>>,
+    entries: ObjectIdOrContent<BTreeMap<String, Inode>>,
     /// Number of file descriptors pointing to this directory. When you rmdir()
     /// a directory that is open, you can still call readdir() on it succesfully;
     /// it will just return no entries (not even "." or "..").
@@ -175,7 +175,7 @@ impl GitFs {
         // TODO: We need a detectable error for non-existence; it shouldn't be returns as an Err() here.
         let inode = self.resolve_path(ROOT_INODE, path, false)?;
 
-        let mode = match self.fs.nodes[inode] {
+        let mode = match &self.fs.nodes[inode] {
             Node::File(file) => file.mode,
             Node::Directory(_) => return Ok(FileState::NonExistent),
         };
@@ -196,6 +196,91 @@ impl GitFs {
         }))
     }
 
+    /// Record that the file at `path` may have been modified.
+    fn record_modified_path(&mut self, path: String) {
+        self.maybe_changed.insert(path);
+    }
+
+    /// Record that `inode` may have been modified, at its current path.
+    /// If it is hard linked we record all of its paths.
+    pub fn record_modified_inode(&mut self, inode: Inode) {
+        for path in self.inode_paths(inode) {
+            self.record_modified_path(path);
+        }
+    }
+
+    /// The set of full paths for `inode`, relative to the root of the filesystem (so
+    /// there is no leading `/`). Normally there will be one entry, if it has
+    /// been unlinked there will be 0, if it has been hard linked it will be >1.
+    // TODO: Use SmallVector<1, String> for return type.
+    pub fn inode_paths(&self, inode: Inode) -> Vec<String> {
+        if inode == ROOT_INODE {
+            return vec![];
+        }
+
+        // There shouldn't be any path loops, but just in case we made a mistake
+        // we can throw an error instead of hanging.
+        const MAX_PATH_DEPTH: usize = 1024 * 1024;
+
+        // Parent directories of the node. If it is a directory it will only have
+        // one but it if is a file it can have multiple due to hard links.
+        let parent_dirs: &[Inode] = match &self.fs.nodes[inode] {
+            Node::File(file) => &file.parents,
+            Node::Directory(dir) => &[dir.parent],
+        };
+
+        parent_dirs
+            .into_iter()
+            .map(|parent| {
+                let mut components = Vec::new();
+                let mut current = inode;
+
+                for _ in 0..MAX_PATH_DEPTH {
+                    let parent = match &self.fs.nodes[current] {
+                        Node::File(_) => unreachable!("A directory cannot have a file as parent"),
+                        Node::Directory(dir) => dir.parent,
+                    };
+                    components.push(current);
+                    if parent == ROOT_INODE {
+                        // We got to the root, now build up the string.
+                        let mut path = String::new();
+                        let mut parent = parent;
+                        for child in components.into_iter().rev() {
+                            let name = self
+                                .name_in_directory(parent, child)
+                                .expect("Logic error in inode_paths");
+                            path.push('/');
+                            path.push_str(&name);
+                            parent = child;
+                        }
+                        return path;
+                    }
+                    current = parent;
+                }
+
+                // TODO: Hopefully nobody will have 1 million directories, but could they?
+                unreachable!("Directory tree is too deep, or contains a loop");
+            })
+            .collect()
+    }
+
+    /// Get the name of the file `child` in the `parent` directory `parent`.
+    fn name_in_directory(&self, parent: Inode, child: Inode) -> Option<String> {
+        let Node::Directory(DirectoryNode {
+            entries: ObjectIdOrContent::Content(entries),
+            ..
+        }) = &self.fs.nodes[parent]
+        else {
+            // This shouldn't really happen I think?
+            todo!("Handle this more gracefully")
+        };
+        // TODO: Potentially use bimap so we don't need to search?
+        entries
+            .iter()
+            .find(|(_, inode)| **inode == child)
+            .map(|(name, _)| name.clone())
+    }
+
     pub fn get_node(&self, inode: Inode) -> FsResult<&Node> {
         self.fs
             .nodes
@@ -211,7 +296,7 @@ impl GitFs {
     /// Only relative paths are allowed. Absolute paths cause a permission error.
     /// For this function the target file or directory (or symlink) must exist.
     fn resolve_path(
-        &mut self,
+        &self,
         from: Inode,
         relative_path: &str,
         follow_final_symlink: bool,
