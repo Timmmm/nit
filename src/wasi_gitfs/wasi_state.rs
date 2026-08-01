@@ -1,6 +1,3 @@
-use std::{collections::HashSet, path::PathBuf};
-
-use gix::{ObjectId, Repository, objs::tree::EntryKind};
 use wasmtime::component::{HasData, Linker, Resource};
 use wasmtime_wasi::{
     ResourceTable, ResourceTableError, WasiCtx, WasiCtxView, WasiView,
@@ -17,17 +14,15 @@ use wasmtime_wasi::{
     },
 };
 
-use crate::wasi_gitfs::gitfs::{GitFs, Inode, Node, ROOT_INODE};
+use crate::wasi_gitfs::gitfs::{GitFs, Inode, ROOT_INODE, SharedContent, write_at};
 
 pub struct WasiState {
     pub wasi_ctx: WasiCtx,
     // This is basically a `Vec<any>`.
     pub resource_table: ResourceTable,
     // The git filesystem. This is a *mutable* filesystem backed by a Git repository.
+    // It also tracks the paths that may have been modified; see `GitFs::modifications()`.
     pub gitfs: GitFs,
-    // Set of paths that may have changed.
-    // TODO: This doesn't need to be pub; we should make a proper fn new() -> Self.
-    pub maybe_changed: HashSet<PathBuf>,
 }
 
 impl WasiView for WasiState {
@@ -44,9 +39,12 @@ impl WasiView for WasiState {
 // to access the underlying file/directory (e.g. a POSIX file descriptor).
 //
 // In our case it *is* the file descriptor, and it contains the inode index.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone)]
 pub struct GitFsDescriptor {
     pub inode: Inode,
+    /// The flags it was opened with. Needed by `get_flags()`, and to reject
+    /// writes to a file that was opened read-only.
+    pub flags: DescriptorFlags,
 }
 
 /// Type returned by `read_dir()` that allows iterating through directory entries.
@@ -58,11 +56,15 @@ pub struct GitFsReaddirIterator {
 /// but pretending they are wasmtime's `Descriptor`s (which actually represent
 /// real files on disk). Unfortunately wasmtime doesn't let us choose the
 /// `Descriptor` type so we just lie to it.
+///
+/// This mirrors the whole of the `ResourceTable` API even though we don't
+/// currently need all of it.
+#[allow(dead_code)]
 trait ResourceTableExt {
     fn push_gitfs_descriptor(
         &mut self,
         gitfs_descriptor: GitFsDescriptor,
-    ) -> anyhow::Result<Resource<Descriptor>>;
+    ) -> Result<Resource<Descriptor>, ResourceTableError>;
     fn get_gitfs_descriptor(
         &self,
         key: &Resource<Descriptor>,
@@ -79,7 +81,7 @@ trait ResourceTableExt {
     fn push_gitfs_readdiriterator(
         &mut self,
         gitfs_readdiriterator: GitFsReaddirIterator,
-    ) -> anyhow::Result<Resource<ReaddirIterator>>;
+    ) -> Result<Resource<ReaddirIterator>, ResourceTableError>;
     fn get_gitfs_readdiriterator(
         &self,
         key: &Resource<ReaddirIterator>,
@@ -98,7 +100,7 @@ impl ResourceTableExt for ResourceTable {
     fn push_gitfs_descriptor(
         &mut self,
         gitfs_descriptor: GitFsDescriptor,
-    ) -> anyhow::Result<Resource<Descriptor>> {
+    ) -> Result<Resource<Descriptor>, ResourceTableError> {
         let my_resource = self.push(gitfs_descriptor)?;
         Ok(if my_resource.owned() {
             Resource::new_own(my_resource.rep())
@@ -143,7 +145,7 @@ impl ResourceTableExt for ResourceTable {
     fn push_gitfs_readdiriterator(
         &mut self,
         gitfs_readdiriterator: GitFsReaddirIterator,
-    ) -> anyhow::Result<Resource<ReaddirIterator>> {
+    ) -> Result<Resource<ReaddirIterator>, ResourceTableError> {
         let my_resource = self.push(gitfs_readdiriterator)?;
         Ok(if my_resource.owned() {
             Resource::new_own(my_resource.rep())
@@ -189,13 +191,11 @@ impl ResourceTableExt for ResourceTable {
     }
 }
 
-fn gix_entry_kind_to_descriptor_type(kind: EntryKind) -> DescriptorType {
-    match kind {
-        EntryKind::Tree => DescriptorType::Directory,
-        EntryKind::Blob | EntryKind::BlobExecutable => DescriptorType::RegularFile,
-        EntryKind::Link => DescriptorType::SymbolicLink,
-        // For simplicity, submodules are treated as empty directories.
-        EntryKind::Commit => DescriptorType::Directory,
+impl WasiState {
+    /// The descriptor for `fd`. A bogus handle is a trap, not an error, but
+    /// wasmtime traps for us if we return the `ResourceTableError`.
+    fn descriptor(&self, fd: &Resource<Descriptor>) -> FsResult<GitFsDescriptor> {
+        Ok(*self.resource_table.get_gitfs_descriptor(fd)?)
     }
 }
 
@@ -210,9 +210,10 @@ impl filesystem::preopens::Host for WasiState {
         Ok(vec![(
             // Create a new file descriptor and add it to the resource table,
             // returning its index in the table.
-            self.resource_table
-                .push_gitfs_descriptor(GitFsDescriptor { inode: ROOT_INODE })
-                .expect("failed to push root preopen"), // TODO: Not expect. Need to figure out what wasmtime's .context() equivalent is.
+            self.resource_table.push_gitfs_descriptor(GitFsDescriptor {
+                inode: ROOT_INODE,
+                flags: DescriptorFlags::READ | DescriptorFlags::MUTATE_DIRECTORY,
+            })?,
             // Path
             "/".to_string(),
         )])
@@ -225,35 +226,36 @@ impl filesystem::types::HostDescriptor for WasiState {
         &mut self,
         fd: Resource<Descriptor>,
         offset: u64,
-    ) -> FsResult<Resource<Box<(dyn wasmtime_wasi::p2::InputStream + 'static)>>> {
-        let descriptor = self.resource_table.get_mut_gitfs_descriptor(&fd).unwrap();
-        let data = self.gitfs.read_file(descriptor.inode)?;
-        // TODO: Don't copy all the data.
-        // TODO: Handle usize=32 bit. In fact, we probably can't actually read files
-        // stored in Git that are more than 4 GB?
+    ) -> FsResult<Resource<Box<dyn wasmtime_wasi::p2::InputStream + 'static>>> {
+        let descriptor = self.descriptor(&fd)?;
+        if !descriptor.flags.contains(DescriptorFlags::READ) {
+            return Err(ErrorCode::BadDescriptor.into());
+        }
+
+        // The stream shares the file's buffer, so it sees writes made while it
+        // is open, and we don't have to copy the whole file.
         let read_stream = ReadStream {
-            data: bytes::Bytes::copy_from_slice(data),
-            offset: offset as usize,
+            content: self.gitfs.content(descriptor.inode)?,
+            offset: usize::try_from(offset).map_err(|_| ErrorCode::FileTooLarge)?,
         };
         let boxed_read_stream: Box<dyn wasmtime_wasi::p2::InputStream> = Box::new(read_stream);
         // TODO: Drop from the resource table at some point somehow? Might have to use push_child?
-        Ok(self.resource_table.push(boxed_read_stream).unwrap())
+        Ok(self.resource_table.push(boxed_read_stream)?)
     }
 
-    // TODO (0.1): Implement all these functions.
     fn write_via_stream(
         &mut self,
-        _fd: Resource<Descriptor>,
-        _offset: u64,
-    ) -> FsResult<Resource<Box<(dyn wasmtime_wasi::p2::OutputStream + 'static)>>> {
-        todo!();
+        fd: Resource<Descriptor>,
+        offset: u64,
+    ) -> FsResult<Resource<Box<dyn wasmtime_wasi::p2::OutputStream + 'static>>> {
+        self.open_write_stream(fd, Position::At(offset))
     }
 
     fn append_via_stream(
         &mut self,
-        _fd: Resource<Descriptor>,
-    ) -> FsResult<Resource<Box<(dyn wasmtime_wasi::p2::OutputStream + 'static)>>> {
-        todo!();
+        fd: Resource<Descriptor>,
+    ) -> FsResult<Resource<Box<dyn wasmtime_wasi::p2::OutputStream + 'static>>> {
+        self.open_write_stream(fd, Position::Append)
     }
 
     async fn advise(
@@ -273,21 +275,20 @@ impl filesystem::types::HostDescriptor for WasiState {
     }
 
     async fn get_flags(&mut self, fd: Resource<Descriptor>) -> FsResult<DescriptorFlags> {
-        // TODO: I guess we will need to record in the descriptor how it was opened.
-        Ok(DescriptorFlags::READ)
+        Ok(self.descriptor(&fd)?.flags)
     }
 
     async fn get_type(&mut self, fd: Resource<Descriptor>) -> FsResult<DescriptorType> {
-        let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
-        let ty = match self.gitfs.get_node(descriptor.inode)? {
-            Node::File(_) => DescriptorType::RegularFile,
-            Node::Directory(_) => DescriptorType::Directory,
-        };
-        Ok(ty)
+        let descriptor = self.descriptor(&fd)?;
+        self.gitfs.descriptor_type(descriptor.inode)
     }
 
-    async fn set_size(&mut self, _fd: Resource<Descriptor>, _size: Filesize) -> FsResult<()> {
-        todo!()
+    async fn set_size(&mut self, fd: Resource<Descriptor>, size: Filesize) -> FsResult<()> {
+        let descriptor = self.descriptor(&fd)?;
+        if !descriptor.flags.contains(DescriptorFlags::WRITE) {
+            return Err(ErrorCode::BadDescriptor.into());
+        }
+        self.gitfs.set_size(descriptor.inode, size)
     }
 
     async fn set_times(
@@ -296,7 +297,8 @@ impl filesystem::types::HostDescriptor for WasiState {
         _data_access_timestamp: NewTimestamp,
         _data_modification_timestamp: NewTimestamp,
     ) -> FsResult<()> {
-        // TODO: Maybe we just ignore it?
+        // We don't store timestamps at all (`stat()` reports none), so rather
+        // than pretend to set them, say we can't.
         Err(ErrorCode::NotPermitted.into())
     }
 
@@ -306,56 +308,37 @@ impl filesystem::types::HostDescriptor for WasiState {
         length: Filesize,
         offset: Filesize,
     ) -> FsResult<(Vec<u8>, bool)> {
-        let descriptor = self.resource_table.get_mut_gitfs_descriptor(&fd).unwrap();
-        let blob = self.gitfs.read_file(descriptor.inode)?;
-        // TODO: Handle usize properly.
-        let length = length as usize;
-        let offset = offset as usize;
-        if offset >= blob.len() {
-            // TODO: Should this be an error?
-            Ok((Vec::new(), true))
-        } else {
-            let length = length.min(blob.len() - offset);
-            let eof = offset + length >= blob.len();
-            Ok((blob[offset..(offset + length)].to_owned(), eof))
+        let descriptor = self.descriptor(&fd)?;
+        if !descriptor.flags.contains(DescriptorFlags::READ) {
+            return Err(ErrorCode::BadDescriptor.into());
         }
+        self.gitfs.read_at(descriptor.inode, offset, length)
     }
 
     async fn write(
         &mut self,
-        _fd: Resource<Descriptor>,
-        _buffer: Vec<u8>,
-        _offset: Filesize,
+        fd: Resource<Descriptor>,
+        buffer: Vec<u8>,
+        offset: Filesize,
     ) -> FsResult<Filesize> {
-        todo!()
+        let descriptor = self.descriptor(&fd)?;
+        if !descriptor.flags.contains(DescriptorFlags::WRITE) {
+            return Err(ErrorCode::BadDescriptor.into());
+        }
+        self.gitfs.write_at(descriptor.inode, offset, &buffer)
     }
 
     async fn read_directory(
         &mut self,
         fd: Resource<Descriptor>,
     ) -> FsResult<Resource<ReaddirIterator>> {
-        todo!()
-        // let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
-        // // TODO: Could use `find_tree_iter()` ideally but I don't know if the
-        // // lifetime issues are easy to deal with, or if it makes any performance difference.
-        // let tree = self.gitfs.repo.find_tree(descriptor.id).unwrap();
-        // let mut entries: Vec<_> = tree
-        //     .iter()
-        //     .map(|entry| {
-        //         let entry = entry.unwrap();
-        //         DirectoryEntry {
-        //             type_: gix_entry_kind_to_descriptor_type(entry.kind()),
-        //             name: entry.filename().to_string(),
-        //         }
-        //     })
-        //     .collect();
-        // // Reverse because we pop them off the back when reading.
-        // // TODO: Probably can do this more efficiently somehow.
-        // entries.reverse();
-        // Ok(self
-        //     .resource_table
-        //     .push_gitfs_readdiriterator(GitFsReaddirIterator { entries })
-        //     .unwrap())
+        let descriptor = self.descriptor(&fd)?;
+        let mut entries = self.gitfs.read_directory(descriptor.inode)?;
+        // Reverse because we pop them off the back when reading.
+        entries.reverse();
+        Ok(self
+            .resource_table
+            .push_gitfs_readdiriterator(GitFsReaddirIterator { entries })?)
     }
 
     async fn sync(&mut self, _fd: Resource<Descriptor>) -> FsResult<()> {
@@ -365,34 +348,17 @@ impl filesystem::types::HostDescriptor for WasiState {
 
     async fn create_directory_at(
         &mut self,
-        _fd: Resource<Descriptor>,
-        _path: String,
+        fd: Resource<Descriptor>,
+        path: String,
     ) -> FsResult<()> {
-        todo!()
+        let descriptor = self.descriptor(&fd)?;
+        let (directory, name) = self.gitfs.resolve_parent(descriptor.inode, &path)?;
+        self.gitfs.create_directory(directory, &name)
     }
 
     async fn stat(&mut self, fd: Resource<Descriptor>) -> FsResult<DescriptorStat> {
-        todo!()
-        // let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
-        // Ok(DescriptorStat {
-        //     type_: gix_entry_kind_to_descriptor_type(descriptor.kind),
-        //     // Git doesn't support hard links and the normal case is 1, not 0.
-        //     link_count: 1,
-        //     // In posix for symlinks this is the size of the path. Does that apply here?
-        //     size: match descriptor.kind {
-        //         // For symlinks this should return the size of the path, which Git
-        //         // conveniently stores as the blob data, so we can use the same code.
-        //         EntryKind::Blob | EntryKind::BlobExecutable | EntryKind::Link => {
-        //             self.gitfs.repo.find_header(descriptor.id).unwrap().size()
-        //         }
-        //         // Directory or submodule.
-        //         EntryKind::Tree | EntryKind::Commit => 0,
-        //     },
-        //     // Git doesn't record this.
-        //     data_access_timestamp: None,
-        //     data_modification_timestamp: None,
-        //     status_change_timestamp: None,
-        // })
+        let descriptor = self.descriptor(&fd)?;
+        self.gitfs.stat(descriptor.inode)
     }
 
     async fn stat_at(
@@ -401,33 +367,12 @@ impl filesystem::types::HostDescriptor for WasiState {
         path_flags: PathFlags,
         path: String,
     ) -> FsResult<DescriptorStat> {
-        let from_descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
-        let follow_final_symlink: bool = path_flags.contains(PathFlags::SYMLINK_FOLLOW);
-        todo!()
-        // let descriptor = self
-        //     .gitfs
-        //     .resolve_path(*from_descriptor, &path, follow_final_symlink)?;
-
-        // // TODO: Extract into function.
-        // Ok(DescriptorStat {
-        //     type_: gix_entry_kind_to_descriptor_type(descriptor.kind),
-        //     // Git doesn't support hard links and the normal case is 1, not 0.
-        //     link_count: 1,
-        //     // In posix for symlinks this is the size of the path. Does that apply here?
-        //     size: match descriptor.kind {
-        //         // For symlinks this should return the size of the path, which Git
-        //         // conveniently stores as the blob data, so we can use the same code.
-        //         EntryKind::Blob | EntryKind::BlobExecutable | EntryKind::Link => {
-        //             self.gitfs.repo.find_header(descriptor.id).unwrap().size()
-        //         }
-        //         // Directory or submodule.
-        //         EntryKind::Tree | EntryKind::Commit => 0,
-        //     },
-        //     // Git doesn't record this.
-        //     data_access_timestamp: None,
-        //     data_modification_timestamp: None,
-        //     status_change_timestamp: None,
-        // })
+        let descriptor = self.descriptor(&fd)?;
+        let follow_final_symlink = path_flags.contains(PathFlags::SYMLINK_FOLLOW);
+        let inode = self
+            .gitfs
+            .resolve_path(descriptor.inode, &path, follow_final_symlink)?;
+        self.gitfs.stat(inode)
     }
 
     async fn set_times_at(
@@ -438,7 +383,7 @@ impl filesystem::types::HostDescriptor for WasiState {
         _data_access_timestamp: NewTimestamp,
         _data_modification_timestamp: NewTimestamp,
     ) -> FsResult<()> {
-        // TODO: Maybe just ignore it?
+        // See `set_times()`.
         Err(ErrorCode::NotPermitted.into())
     }
 
@@ -450,8 +395,8 @@ impl filesystem::types::HostDescriptor for WasiState {
         _new_descriptor: Resource<Descriptor>,
         _new_path: String,
     ) -> FsResult<()> {
-        // hard link.
-        todo!()
+        // Hard link. Git can't represent these at all.
+        Err(ErrorCode::Unsupported.into())
     }
 
     // Open the relative path `path`, relative to the directory `fd`. Unlike
@@ -464,84 +409,106 @@ impl filesystem::types::HostDescriptor for WasiState {
         open_flags: OpenFlags,
         flags: DescriptorFlags,
     ) -> FsResult<Resource<Descriptor>> {
-        if open_flags.contains(OpenFlags::CREATE)
-            || open_flags.contains(OpenFlags::TRUNCATE)
-            || flags.contains(DescriptorFlags::WRITE)
-        {
-            return Err(ErrorCode::ReadOnly.into());
+        let descriptor = self.descriptor(&fd)?;
+        let follow_final_symlink = path_flags.contains(PathFlags::SYMLINK_FOLLOW);
+        let write = flags.contains(DescriptorFlags::WRITE);
+
+        let inode = if open_flags.contains(OpenFlags::CREATE) {
+            let (directory, name, existing) =
+                self.gitfs
+                    .resolve_for_create(descriptor.inode, &path, follow_final_symlink)?;
+            match existing {
+                Some(inode) => {
+                    if open_flags.contains(OpenFlags::EXCLUSIVE) {
+                        return Err(ErrorCode::Exist.into());
+                    }
+                    inode
+                }
+                None => self.gitfs.create_file(directory, &name)?,
+            }
+        } else {
+            self.gitfs
+                .resolve_path(descriptor.inode, &path, follow_final_symlink)?
+        };
+
+        // WASI says opening a symlink without `symlink-follow` is an error
+        // rather than opening the link itself.
+        if !follow_final_symlink && self.gitfs.is_symlink(inode)? {
+            return Err(ErrorCode::Loop.into());
         }
 
-        // TODO: Handle other DescriptorFlags maybe.
+        if self.gitfs.is_directory(inode)? {
+            if write || open_flags.contains(OpenFlags::TRUNCATE) {
+                return Err(ErrorCode::IsDirectory.into());
+            }
+        } else if open_flags.contains(OpenFlags::DIRECTORY) {
+            return Err(ErrorCode::NotDirectory.into());
+        }
 
-        let from_descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
-        let follow_final_symlink: bool = path_flags.contains(PathFlags::SYMLINK_FOLLOW);
-        todo!()
-        // let descriptor = self
-        //     .gitfs
-        //     .resolve_path(*from_descriptor, &path, follow_final_symlink)?;
+        if open_flags.contains(OpenFlags::TRUNCATE) {
+            self.gitfs.set_size(inode, 0)?;
+        } else if write {
+            // Conservatively assume anything opened for writing was written to.
+            // `modifications()` checks whether the contents really changed.
+            self.gitfs.record_modified(inode);
+        }
 
-        // if open_flags.contains(OpenFlags::EXCLUSIVE) {
-        //     return Err(ErrorCode::Exist.into());
-        // }
-
-        // if open_flags.contains(OpenFlags::DIRECTORY) && descriptor.kind != EntryKind::Tree {
-        //     return Err(ErrorCode::NotDirectory.into());
-        // }
-
-        // Ok(self
-        //     .resource_table
-        //     .push_gitfs_descriptor(descriptor)
-        //     .unwrap())
+        Ok(self
+            .resource_table
+            .push_gitfs_descriptor(GitFsDescriptor { inode, flags })?)
     }
 
     async fn readlink_at(&mut self, fd: Resource<Descriptor>, path: String) -> FsResult<String> {
-        let from_descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
-        // let descriptor = self.gitfs.resolve_path(*from_descriptor, &path, false)?;
-
-        // if descriptor.kind != EntryKind::Link {
-        //     return Err(ErrorCode::Invalid.into());
-        // }
-
-        todo!()
-        // let mut link = self
-        //     .gitfs
-        //     .repo
-        //     .find_blob(descriptor.id)
-        //     .map_err(|_| ErrorCode::NoEntry)?;
-        // let link_str =
-        //     String::from_utf8(link.take_data()).map_err(|_| ErrorCode::IllegalByteSequence)?;
-        // Ok(link_str.to_owned())
+        let descriptor = self.descriptor(&fd)?;
+        let inode = self.gitfs.resolve_path(descriptor.inode, &path, false)?;
+        self.gitfs.symlink_target(inode)
     }
 
     async fn remove_directory_at(
         &mut self,
-        _fd: Resource<Descriptor>,
-        _path: String,
+        fd: Resource<Descriptor>,
+        path: String,
     ) -> FsResult<()> {
-        todo!()
+        let descriptor = self.descriptor(&fd)?;
+        let (directory, name) = self.gitfs.resolve_parent(descriptor.inode, &path)?;
+        self.gitfs.remove_directory(directory, &name)
     }
 
     async fn rename_at(
         &mut self,
-        _fd: Resource<Descriptor>,
-        _old_path: String,
-        _new_descriptor: Resource<Descriptor>,
-        _new_path: String,
+        fd: Resource<Descriptor>,
+        old_path: String,
+        new_descriptor: Resource<Descriptor>,
+        new_path: String,
     ) -> FsResult<()> {
-        todo!()
+        let old_descriptor = self.descriptor(&fd)?;
+        let new_descriptor = self.descriptor(&new_descriptor)?;
+
+        let (old_directory, old_name) =
+            self.gitfs.resolve_parent(old_descriptor.inode, &old_path)?;
+        let (new_directory, new_name) =
+            self.gitfs.resolve_parent(new_descriptor.inode, &new_path)?;
+
+        self.gitfs
+            .rename(old_directory, &old_name, new_directory, &new_name)
     }
 
     async fn symlink_at(
         &mut self,
-        _fd: Resource<Descriptor>,
-        _old_path: String,
-        _new_path: String,
+        fd: Resource<Descriptor>,
+        old_path: String,
+        new_path: String,
     ) -> FsResult<()> {
-        todo!()
+        let descriptor = self.descriptor(&fd)?;
+        // `new_path` is the symlink itself; `old_path` is its target.
+        let (directory, name) = self.gitfs.resolve_parent(descriptor.inode, &new_path)?;
+        self.gitfs.create_symlink(directory, &name, &old_path)
     }
 
-    async fn unlink_file_at(&mut self, _fd: Resource<Descriptor>, _path: String) -> FsResult<()> {
-        todo!()
+    async fn unlink_file_at(&mut self, fd: Resource<Descriptor>, path: String) -> FsResult<()> {
+        let descriptor = self.descriptor(&fd)?;
+        let (directory, name) = self.gitfs.resolve_parent(descriptor.inode, &path)?;
+        self.gitfs.unlink(directory, &name)
     }
 
     async fn is_same_object(
@@ -549,42 +516,72 @@ impl filesystem::types::HostDescriptor for WasiState {
         fd: Resource<Descriptor>,
         other: Resource<Descriptor>,
     ) -> wasmtime::Result<bool> {
-        let fd = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
-        let other = self.resource_table.get_gitfs_descriptor(&other).unwrap();
-        Ok(fd == other)
+        // Two descriptors opened separately on the same file are the same
+        // object, even if they were opened with different flags.
+        Ok(self.descriptor(&fd)?.inode == self.descriptor(&other)?.inode)
     }
 
     async fn metadata_hash(&mut self, fd: Resource<Descriptor>) -> FsResult<MetadataHashValue> {
-        // Kind of unclear what the use case for this is if you ask me.
-        // While this is read-only we can just return the object ID which is long enough.
-        todo!();
-        // let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
-        // Ok(MetadataHashValue {
-        //     lower: u64::from_le_bytes(descriptor.inode.as_bytes()[0..8].try_into().unwrap()),
-        //     upper: u64::from_le_bytes(descriptor.inode.as_bytes()[8..16].try_into().unwrap()),
-        // })
+        let descriptor = self.descriptor(&fd)?;
+        Ok(metadata_hash(descriptor.inode))
     }
 
     async fn metadata_hash_at(
         &mut self,
         fd: Resource<Descriptor>,
-        _path_flags: PathFlags,
-        _path: String,
+        path_flags: PathFlags,
+        path: String,
     ) -> FsResult<MetadataHashValue> {
-        // Kind of unclear what the use case for this is if you ask me.
-        // While this is read-only we can just return the object ID which is long enough.
-        todo!();
-        // let descriptor = self.resource_table.get_gitfs_descriptor(&fd).unwrap();
-        // Ok(MetadataHashValue {
-        //     lower: u64::from_le_bytes(descriptor.inode.as_bytes()[0..8].try_into().unwrap()),
-        //     upper: u64::from_le_bytes(descriptor.inode.as_bytes()[8..16].try_into().unwrap()),
-        // })
+        let descriptor = self.descriptor(&fd)?;
+        let follow_final_symlink = path_flags.contains(PathFlags::SYMLINK_FOLLOW);
+        let inode = self
+            .gitfs
+            .resolve_path(descriptor.inode, &path, follow_final_symlink)?;
+        Ok(metadata_hash(inode))
     }
 
     fn drop(&mut self, fd: Resource<Descriptor>) -> wasmtime::Result<()> {
         // This will drop the `Descriptor` which should close the file.
         self.resource_table.delete_gitfs_descriptor(fd)?;
         Ok(())
+    }
+}
+
+impl WasiState {
+    fn open_write_stream(
+        &mut self,
+        fd: Resource<Descriptor>,
+        position: Position,
+    ) -> FsResult<Resource<Box<dyn wasmtime_wasi::p2::OutputStream + 'static>>> {
+        let descriptor = self.descriptor(&fd)?;
+        if !descriptor.flags.contains(DescriptorFlags::WRITE) {
+            return Err(ErrorCode::BadDescriptor.into());
+        }
+        if self.gitfs.is_directory(descriptor.inode)? {
+            return Err(ErrorCode::IsDirectory.into());
+        }
+
+        // The stream can't call back into `GitFs` (it only gets `&mut self`),
+        // so it writes into the file's buffer directly. That also means we have
+        // to record the possible modification now rather than when it happens.
+        let write_stream = WriteStream {
+            content: self.gitfs.content(descriptor.inode)?,
+            position,
+        };
+        self.gitfs.record_modified(descriptor.inode);
+
+        let boxed_write_stream: Box<dyn wasmtime_wasi::p2::OutputStream> = Box::new(write_stream);
+        Ok(self.resource_table.push(boxed_write_stream)?)
+    }
+}
+
+/// The `metadata-hash` of an inode. It's only used as an identity for the file
+/// (the preview 1 adapter reports it as `st_ino`), so the inode index - which
+/// is never reused - is all we need.
+fn metadata_hash(inode: Inode) -> MetadataHashValue {
+    MetadataHashValue {
+        lower: inode as u64,
+        upper: 0,
     }
 }
 
@@ -595,10 +592,7 @@ impl filesystem::types::HostDirectoryEntryStream for WasiState {
         &mut self,
         stream: Resource<ReaddirIterator>,
     ) -> FsResult<Option<DirectoryEntry>> {
-        let stream = self
-            .resource_table
-            .get_mut_gitfs_readdiriterator(&stream)
-            .unwrap();
+        let stream = self.resource_table.get_mut_gitfs_readdiriterator(&stream)?;
         Ok(stream.entries.pop())
     }
 
@@ -617,16 +611,15 @@ impl filesystem::types::Host for WasiState {
         &mut self,
         err: Resource<wasmtime::Error>,
     ) -> wasmtime::Result<Option<ErrorCode>> {
-        let err = self.resource_table.get(&err)?;
-
-        // TODO: Do we need to do something here?
-
+        // Check the handle is valid, but our streams never fail with anything
+        // that can be turned into an `ErrorCode`.
+        let _ = self.resource_table.get(&err)?;
         Ok(None)
     }
 }
 
 struct ReadStream {
-    data: bytes::Bytes,
+    content: SharedContent,
     offset: usize,
 }
 
@@ -663,14 +656,69 @@ impl wasmtime_wasi::p2::InputStream for ReadStream {
     /// The [`StreamError`] return value communicates when this stream is
     /// closed, when a read fails, or when a trap should be generated.
     fn read(&mut self, size: usize) -> StreamResult<bytes::Bytes> {
-        if self.offset >= self.data.len() {
+        let content = self.content.lock().expect("content mutex poisoned");
+        if self.offset >= content.len() {
             Err(StreamError::Closed)
         } else {
-            let size = size.min(self.data.len() - self.offset);
-            let offset = self.offset;
+            let size = size.min(content.len() - self.offset);
+            let bytes = bytes::Bytes::copy_from_slice(&content[self.offset..self.offset + size]);
             self.offset += size;
-            Ok(self.data.slice(offset..offset + size))
+            Ok(bytes)
         }
+    }
+}
+
+/// Where the next write to a `WriteStream` goes.
+enum Position {
+    /// At a fixed offset that advances as we write.
+    At(u64),
+    /// Always at the end of the file.
+    Append,
+}
+
+struct WriteStream {
+    content: SharedContent,
+    position: Position,
+}
+
+#[async_trait::async_trait]
+impl wasmtime_wasi::p2::Pollable for WriteStream {
+    async fn ready(&mut self) {
+        // It's always ready.
+    }
+}
+
+/// How many bytes we accept in one `write()`. There's no real limit because we
+/// just write into a `Vec`, but `check-write` has to return something.
+const WRITE_CHUNK_SIZE: usize = 1024 * 1024;
+
+impl wasmtime_wasi::p2::OutputStream for WriteStream {
+    fn write(&mut self, bytes: bytes::Bytes) -> StreamResult<()> {
+        let mut content = self.content.lock().expect("content mutex poisoned");
+
+        let offset = match self.position {
+            Position::At(offset) => offset,
+            Position::Append => content.len() as u64,
+        };
+
+        write_at(&mut content, offset, &bytes).map_err(|_| {
+            StreamError::LastOperationFailed(wasmtime::Error::msg("file is too large"))
+        })?;
+
+        if let Position::At(offset) = &mut self.position {
+            *offset += bytes.len() as u64;
+        }
+
+        Ok(())
+    }
+
+    fn flush(&mut self) -> StreamResult<()> {
+        // Nothing is buffered; writes go straight into the file's contents.
+        Ok(())
+    }
+
+    fn check_write(&mut self) -> StreamResult<usize> {
+        Ok(WRITE_CHUNK_SIZE)
     }
 }
 
